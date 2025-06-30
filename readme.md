@@ -1,5 +1,6 @@
-<img src="./faptopia.png" alt="Faptopia logo" width="300">
-
+<p align="center">
+  <img src="./faptopia.png" alt="Faptopia logo" width="300">
+</p>
 # Faptopia
 
 A command-line tool for creating gallery views of media content from Reddit and 4chan's /gif/ board.
