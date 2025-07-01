@@ -16,7 +16,7 @@ A command-line tool for creating gallery views of media content from Reddit and 
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/faptopia.git
+git clone https://github.com/Nigh-Knight/faptopia.git
 cd faptopia
 cargo build --release
 ```
