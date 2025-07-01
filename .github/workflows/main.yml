@@ -1,0 +1,32 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-pc-windows-msvc
+          - x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: faptopia-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/faptopia${{ matrix.os == 'windows-latest' && '.exe' || '' }}
