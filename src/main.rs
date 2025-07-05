@@ -88,21 +88,23 @@ fn main() -> io::Result<()> {
     match &cli.command {
         Commands::FourChan(id) => {
             if let Some(ids) = &id.thread {
-                match fetch_video_links_4chan(ids) {
-                    Ok(links) => {
-                        let items: Vec<MediaItem> = links
-                            .into_iter()
-                            .map(|url| MediaItem {
-                                url,
-                                media_type: MediaType::Video,
-                            })
-                            .collect();
-
-                        // where to create the html
-                        save_gallery(items, "faptopia_4chan.html")?;
+                let mut thread_items = Vec::new();
+                for id in ids {
+                    match fetch_video_links_4chan(&[*id]) {
+                        Ok(links) => {
+                            let items = links
+                                .into_iter()
+                                .map(|url| MediaItem {
+                                    url,
+                                    media_type: MediaType::Video,
+                                })
+                                .collect();
+                            thread_items.push((format!("Thread {}", id), items));
+                        }
+                        Err(e) => eprintln!("Error fetching thread {}: {}", id, e),
                     }
-                    Err(e) => eprintln!("Error: {}", e),
                 }
+                save_gallery(thread_items, "faptopia_4chan.html")?;
             } else {
                 println!("INPUT A THREAD ID");
             }
@@ -110,6 +112,7 @@ fn main() -> io::Result<()> {
         // functionality for reddit | allows you to do this: faptopia reddit [subreddit:modifier:time]
         Commands::Reddit(sub_reddit) => {
             if let Some(names) = &sub_reddit.name {
+                let mut subreddit_items = Vec::new();
                 for x in names {
                     let parts: Vec<&str> = x.split(':').collect();
                     if parts.len() == 3 {
@@ -117,7 +120,7 @@ fn main() -> io::Result<()> {
                         let (subreddit, modifier, time) = (parts[0], parts[1], parts[2]);
                         match fetch_media_embeds_reddit(subreddit, modifier, time) {
                             Ok(contents) => {
-                                let items: Vec<MediaItem> = contents
+                                let items = contents
                                     .into_iter()
                                     .flatten()
                                     .map(|url| MediaItem {
@@ -125,9 +128,7 @@ fn main() -> io::Result<()> {
                                         media_type: MediaType::Iframe,
                                     })
                                     .collect();
-                              
-                                // saves the collection of videos to this html file
-                                save_gallery(items, "faptopia_reddit.html")?;
+                                subreddit_items.push((format!("r/{}", subreddit), items));
                             }
                             Err(e) => eprintln!("Error: {}", e),
                         }
@@ -135,6 +136,7 @@ fn main() -> io::Result<()> {
                         println!("Invalid format. Use format: subreddit:modifier:time");
                     }
                 }
+                save_gallery(subreddit_items, "faptopia_reddit.html")?;
             } else {
                 println!("INPUT A SUBREDDIT PAGE");
             }
@@ -145,200 +147,234 @@ fn main() -> io::Result<()> {
 }
 
 // with an input of links to the videos(items) and html filename to write to, creates a scrollable gallery 
-fn save_gallery(items: Vec<MediaItem>, filename: &str) -> io::Result<()> {
+fn save_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> io::Result<()> {
     if items.is_empty() {
-       
         println!("No media items found");
-       
         return Ok(());
     }
     
-    // this is where the scrollable html gallery is created
     let html = generate_gallery(items);
-
     fs::write(filename, html)?;
-
     println!("Gallery saved to {}", filename);
-
     Ok(())
 }
 
 // create a horizontal scrollable gallery 
-fn generate_gallery(items: Vec<MediaItem>) -> String {
-    let gallery_items: String = items
+fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
+    // Generate tabs and content sections
+    let (tabs, sections): (Vec<String>, Vec<String>) = items
         .iter()
         .enumerate()
-        .map(|(index, item)| match item.media_type {
-            MediaType::Iframe => {
-                format!(
-                    r#"<div class="gallery-item" data-index="{index}">
-                            <iframe 
-                                src="{}" 
-                                frameborder="0" 
-                                allowfullscreen 
-                                sandbox="allow-same-origin allow-scripts"
-                                loading="lazy"
-                            ></iframe>
-                        </div>"#,
-                    item.url
-                )
-            }
-            MediaType::Video => {
-                format!(
-                    r#"<div class="gallery-item" data-index="{index}">
-                            <video 
-                                controls 
-                                {autoplay}
-                                {muted}
-                                playsinline
-                                data-index="{index}"
-                                preload="{preload}"
-                            >
-                                <source src="{}" type="video/mp4">
-                            </video>
-                        </div>"#,
-                    item.url,
-                    autoplay = if index == 0 { "autoplay" } else { "" },
-                    muted = if index == 0 { "muted" } else { "" },
-                    preload = if index == 0 { "auto" } else { "none" }
-                )
-            }
+        .map(|(section_index, (source_name, items))| {
+            let gallery_items: String = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let global_index = format!("{}-{}", section_index, index);
+                    match item.media_type {
+                        MediaType::Iframe => format!(
+                            r#"<div class="gallery-item" data-index="{global_index}">
+                                <iframe 
+                                    src="{}" 
+                                    frameborder="0" 
+                                    allowfullscreen 
+                                    sandbox="allow-same-origin allow-scripts"
+                                    loading="lazy"
+                                ></iframe>
+                            </div>"#,
+                            item.url
+                        ),
+                        MediaType::Video => format!(
+                            r#"<div class="gallery-item" data-index="{global_index}">
+                                <video 
+                                    controls 
+                                    {autoplay}
+                                    {muted}
+                                    playsinline
+                                    data-index="{global_index}"
+                                    preload="{preload}"
+                                >
+                                    <source src="{}" type="video/mp4">
+                                </video>
+                            </div>"#,
+                            item.url,
+                            autoplay = if index == 0 { "autoplay" } else { "" },
+                            muted = if index == 0 { "muted" } else { "" },
+                            preload = if index == 0 { "auto" } else { "none" }
+                        ),
+                    }
+                })
+                .collect();
+
+            let tab = format!(
+                r#"<button class="tab-button{}" onclick="showSection({})">{}</button>"#,
+                if section_index == 0 { " active" } else { "" },
+                section_index,
+                source_name
+            );
+
+            let section = format!(
+                r#"<div class="gallery-section{}" data-section="{}">
+                    <div class="gallery-container" id="gallery-{}">
+                        {}
+                    </div>
+                </div>"#,
+                if section_index == 0 { " active" } else { " hidden" },
+                section_index,
+                section_index,
+                gallery_items
+            );
+
+            (tab, section)
         })
-        .collect();
+        .unzip();
 
     format!(
         r#"<!DOCTYPE html>
 <html>
 <head>
-  <title>Media Gallery</title>
-  <style>
-    body {{
-      margin: 0;
-      overflow: hidden;
-      background-color: #121212;
-    }}
-    .gallery-container {{
-      display: flex;
-      overflow-x: auto;
-      scroll-snap-type: x mandatory;
-      height: 100vh;
-      scroll-behavior: smooth;
-    }}
-    .gallery-item {{
-      scroll-snap-align: start;
-      flex: 0 0 100vw;
-      height: 100vh;
-    }}
-    iframe, video {{
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      background-color: black;
-    }}
-    .nav-hint {{
-      position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      color: white;
-      background: rgba(0,0,0,0.7);
-      padding: 10px 20px;
-      border-radius: 20px;
-      font-family: sans-serif;
-      font-size: 1.2rem;
-      z-index: 100;
-    }}
-  </style>
+    <title>Media Gallery</title>
+    <style>
+        body {{
+            margin: 0;
+            overflow: hidden;
+            background-color: #121212;
+            font-family: sans-serif;
+        }}
+        .tabs {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+        }}
+        .tab-button {{
+            background: #333;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            white-space: nowrap;
+        }}
+        .tab-button.active {{
+            background: #666;
+        }}
+        .gallery-section {{
+            margin-top: 50px;
+            height: calc(100vh - 50px);
+        }}
+        .gallery-container {{
+            display: flex;
+            overflow-x: auto;
+            scroll-snap-type: x mandatory;
+            height: 100%;
+            scroll-behavior: smooth;
+        }}
+        .gallery-item {{
+            scroll-snap-align: start;
+            flex: 0 0 100vw;
+            height: 100%;
+        }}
+        .hidden {{
+            display: none;
+        }}
+        iframe, video {{
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background-color: black;
+        }}
+        .nav-hint {{
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.2rem;
+            z-index: 100;
+        }}
+    </style>
 </head>
 <body tabindex="0">
-  <div class="gallery-container" id="gallery">
-    {gallery_items}
-  </div>
-  <div class="nav-hint">Press Z ← → X to navigate</div>
-  <script>
-    let currentIndex = 0;
-    const gallery = document.getElementById('gallery');
-    const galleryItems = document.querySelectorAll('.gallery-item');
-    const totalItems = galleryItems.length;
-    const videos = document.querySelectorAll('video');
-
-    // Focus management for videos
-    function updateVideoFocus(index) {{
-      videos.forEach((video, i) => {{
-        if (i === index) {{
-          video.muted = false;
-          video.play().catch(e => console.log('Autoplay prevented:', e));
-        }} else if (video.played.length > 0) {{
-          video.muted = true;
-          video.pause();
+    <div class="tabs">
+        {tabs}
+    </div>
+    {sections}
+    <div class="nav-hint">Press Z ← → X to navigate</div>
+    <script>
+        let currentSection = 0;
+        let currentIndices = new Array({total_sections}).fill(0);
+        
+        function showSection(index) {{
+            document.querySelectorAll('.gallery-section').forEach(section => 
+                section.classList.add('hidden'));
+            document.querySelectorAll('.tab-button').forEach(tab => 
+                tab.classList.remove('active'));
+            
+            document.querySelector(`[data-section="${{index}}"]`).classList.remove('hidden');
+            document.querySelectorAll('.tab-button')[index].classList.add('active');
+            currentSection = index;
+            updateVideoFocus(currentSection, currentIndices[currentSection]);
         }}
-      }});
-    }}
 
-    // Scroll to item with index
-    function scrollToIndex(index) {{
-      gallery.scrollTo({{
-        left: index * window.innerWidth,
-        behavior: 'smooth'
-      }});
-      updateVideoFocus(index);
-    }}
-
-    // Keyboard navigation
-    function handleNavigation(direction) {{
-      const newIndex = direction === 'forward' 
-        ? (currentIndex + 1) % totalItems 
-        : (currentIndex - 1 + totalItems) % totalItems;
-      
-      scrollToIndex(newIndex);
-      currentIndex = newIndex;
-    }}
-
-    // Intersection Observer for lazy loading and focus
-    const observer = new IntersectionObserver((entries) => {{
-      entries.forEach(entry => {{
-        if (entry.isIntersecting) {{
-          const index = parseInt(entry.target.dataset.index);
-          if (index !== currentIndex) {{
-            currentIndex = index;
-            updateVideoFocus(index);
-          }}
+        function updateVideoFocus(sectionIndex, itemIndex) {{
+            const videos = document.querySelectorAll(`#gallery-${{sectionIndex}} video`);
+            videos.forEach((video, i) => {{
+                if (i === itemIndex) {{
+                    video.muted = false;
+                    video.play().catch(e => console.log('Autoplay prevented:', e));
+                }} else if (video.played.length > 0) {{
+                    video.muted = true;
+                    video.pause();
+                }}
+            }});
         }}
-      }});
-    }}, {{ threshold: 0.5 }});
 
-    // Observe all gallery items
-    galleryItems.forEach(item => observer.observe(item));
+        function scrollToIndex(sectionIndex, index) {{
+            const gallery = document.getElementById(`gallery-${{sectionIndex}}`);
+            gallery.scrollTo({{
+                left: index * window.innerWidth,
+                behavior: 'smooth'
+            }});
+            currentIndices[sectionIndex] = index;
+            updateVideoFocus(sectionIndex, index);
+        }}
 
-    // Event listeners
-    document.addEventListener('keydown', (e) => {{
-      if (e.key === 'x' || e.key === 'X') handleNavigation('forward');
-      if (e.key === 'z' || e.key === 'Z') handleNavigation('back');
-    }});
+        function handleNavigation(direction) {{
+            const gallery = document.getElementById(`gallery-${{currentSection}}`);
+            const items = gallery.querySelectorAll('.gallery-item');
+            const totalItems = items.length;
+            
+            const newIndex = direction === 'forward'
+                ? (currentIndices[currentSection] + 1) % totalItems
+                : (currentIndices[currentSection] - 1 + totalItems) % totalItems;
+            
+            scrollToIndex(currentSection, newIndex);
+        }}
 
-    // Focus body on load
-    document.body.focus();
+        // Event listeners
+        document.addEventListener('keydown', (e) => {{
+            if (e.key === 'x' || e.key === 'X') handleNavigation('forward');
+            if (e.key === 'z' || e.key === 'Z') handleNavigation('back');
+        }});
 
-    // Touch support
-    let touchStartX = 0;
-    gallery.addEventListener('touchstart', (e) => {{
-      touchStartX = e.changedTouches[0].screenX;
-    }});
-    
-    gallery.addEventListener('touchend', (e) => {{
-      const touchEndX = e.changedTouches[0].screenX;
-      if (touchStartX - touchEndX > 50) handleNavigation('forward');
-      if (touchEndX - touchStartX > 50) handleNavigation('back');
-    }});
-
-    // Initialize first video
-    if (videos.length > 0) {{
-      videos[0].muted = false;
-      videos[0].play().catch(e => console.log('First video autoplay:', e));
-    }}
-  </script>
+        // Initialize first section
+        showSection(0);
+    </script>
 </body>
-</html>"#
+</html>"#,
+        tabs = tabs.join("\n"),
+        sections = sections.join("\n"),
+        total_sections = items.len()
     )
 }
 
