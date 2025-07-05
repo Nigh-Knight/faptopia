@@ -2,6 +2,9 @@
   <img src="./faptopia.png" alt="Faptopia logo" width="300">
 </p>
 
+
+<video src="https://github.com/user-attachments/assets/2d701d76-4562-4b5e-baae-cb0f6e0948fc" controls width="600"></video>
+
 A command-line tool for creating gallery views of media content from Reddit and 4chan's /gif/ board.
 
 ## Features
@@ -16,7 +19,7 @@ A command-line tool for creating gallery views of media content from Reddit and 
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/faptopia.git
+git clone https://github.com/Nigh-Knight/faptopia.git
 cd faptopia
 cargo build --release
 ```
