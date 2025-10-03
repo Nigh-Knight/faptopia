@@ -336,7 +336,7 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
             updateVideoFocus(currentSection, currentIndices[currentSection]);
             // Also ensure the section container is scrolled to the remembered item
             const gallery = document.getElementById(`gallery-${{currentSection}}`);
-            gallery.scrollTo({ left: currentIndices[currentSection] * window.innerWidth, behavior: 'instant' });
+            gallery.scrollTo({{ left: currentIndices[currentSection] * window.innerWidth, behavior: 'instant' }});
         }}
 
         // updateVideoFocus: play/unmute only the focused video in the section,
