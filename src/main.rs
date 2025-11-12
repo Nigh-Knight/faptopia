@@ -212,10 +212,14 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
                 .collect();
 
             let tab = format!(
-                r#"<button class="tab-button{}" onclick="showSection({})">{}</button>"#,
+                r#"<button class="tab-button{}" onclick="showSection({})">
+                    <span class="tab-label">{}</span>
+                    <span class="tab-close" onclick="closeTab(event, {})">×</span>
+                </button>"#,
                 if section_index == 0 { " active" } else { "" },
                 section_index,
-                source_name
+                source_name,
+                section_index
             );
 
             let section = format!(
