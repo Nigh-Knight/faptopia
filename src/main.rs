@@ -159,6 +159,11 @@ fn save_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> io::Res
     Ok(())
 }
 
+// Template files embedded at compile time
+const HTML_TEMPLATE: &str = include_str!("../templates/gallery.html");
+const CSS_TEMPLATE: &str = include_str!("../templates/styles.css");
+const JS_TEMPLATE: &str = include_str!("../templates/script.js");
+
 // create a horizontal scrollable gallery 
 fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
     // Generate tabs and content sections
@@ -229,189 +234,14 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
         })
         .unzip();
 
-    format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Media Gallery</title>
-    <style>
-        body {{
-            margin: 0;
-            overflow: hidden;
-            background-color: #121212;
-            font-family: sans-serif;
-        }}
-        .tabs {{
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            background: rgba(0,0,0,0.8);
-            padding: 10px;
-            z-index: 1000;
-            display: flex;
-            gap: 10px;
-            overflow-x: auto;
-        }}
-        .tab-button {{
-            background: #333;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            white-space: nowrap;
-        }}
-        .tab-button.active {{
-            background: #666;
-        }}
-        .gallery-section {{
-            margin-top: 50px;
-            height: calc(100vh - 50px);
-        }}
-        .gallery-container {{
-            display: flex;
-            overflow-x: auto;
-            scroll-snap-type: x mandatory;
-            height: 100%;
-            scroll-behavior: smooth;
-        }}
-        .gallery-item {{
-            scroll-snap-align: start;
-            flex: 0 0 100vw;
-            height: 100%;
-        }}
-        .hidden {{
-            display: none;
-        }}
-        iframe, video {{
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            background-color: black;
-        }}
-        .nav-hint {{
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: white;
-            background: rgba(0,0,0,0.7);
-            padding: 10px 20px;
-            border-radius: 20px;
-            font-size: 1.2rem;
-            z-index: 100;
-        }}
-    </style>
-</head>
-<body tabindex="0">
-    <div class="tabs">
-        {tabs}
-    </div>
-    {sections}
-    <!-- Hint updated to include the new C shortcut -->
-    <div class="nav-hint">Press C to switch boards · Press Z ← → X to navigate</div>
-    <script>
-        // Index of the currently visible board (section)
-        let currentSection = 0;
-        // Per-board remembered focused item index, so switching boards restores position
-        let currentIndices = new Array({total_sections}).fill(0);
-        
-        // showSection: reveals the board at `index`, hides others, updates active tab,
-        // and ensures the correct video in that board has focus/play state.
-        function showSection(index) {{
-            // Hide all sections
-            document.querySelectorAll('.gallery-section').forEach(section => 
-                section.classList.add('hidden'));
-            // Remove active class from all tabs
-            document.querySelectorAll('.tab-button').forEach(tab => 
-                tab.classList.remove('active'));
-            
-            // Show the requested section and mark the corresponding tab active
-            document.querySelector(`[data-section="${{index}}"]`).classList.remove('hidden');
-            document.querySelectorAll('.tab-button')[index].classList.add('active');
-            currentSection = index;
-
-            // Restore the remembered index inside that section and update video playback
-            updateVideoFocus(currentSection, currentIndices[currentSection]);
-            // Also ensure the section container is scrolled to the remembered item
-            const gallery = document.getElementById(`gallery-${{currentSection}}`);
-            gallery.scrollTo({{ left: currentIndices[currentSection] * window.innerWidth, behavior: 'instant' }});
-        }}
-
-        // updateVideoFocus: play/unmute only the focused video in the section,
-        // pause and mute other videos to avoid multiple audio streams.
-        function updateVideoFocus(sectionIndex, itemIndex) {{
-            const videos = document.querySelectorAll(`#gallery-${{sectionIndex}} video`);
-            videos.forEach((video, i) => {{
-                if (i === itemIndex) {{
-                    video.muted = false;
-                    // Attempt to play; may be blocked by autoplay policies, so catch errors.
-                    video.play().catch(e => console.log('Autoplay prevented:', e));
-                }} else {{
-                    // If the other video has ever played, pause and mute it.
-                    if (!video.paused || video.played.length > 0) {{
-                        video.muted = true;
-                        try {{ video.pause(); }} catch (e) {{ /* ignore */ }}
-                    }}
-                }}
-            }});
-        }}
-
-        // scrollToIndex: scrolls the given section to item `index` and updates remembered index + focus.
-        function scrollToIndex(sectionIndex, index) {{
-            const gallery = document.getElementById(`gallery-${{sectionIndex}}`);
-            if (!gallery) return;
-            gallery.scrollTo({{
-                left: index * window.innerWidth,
-                behavior: 'smooth'
-            }});
-            currentIndices[sectionIndex] = index;
-            updateVideoFocus(sectionIndex, index);
-        }}
-
-        // handleNavigation: move forward/back within the current board, wrapping around.
-        function handleNavigation(direction) {{
-            const gallery = document.getElementById(`gallery-${{currentSection}}`);
-            if (!gallery) return;
-            const items = gallery.querySelectorAll('.gallery-item');
-            const totalItems = items.length;
-            if (totalItems === 0) return;
-
-            const newIndex = direction === 'forward'
-                ? (currentIndices[currentSection] + 1) % totalItems
-                : (currentIndices[currentSection] - 1 + totalItems) % totalItems;
-            
-            scrollToIndex(currentSection, newIndex);
-        }}
-
-        // switchBoard: cycle to the next board (wraps). Uses the remembered per-board index.
-        function switchBoard() {{
-            const next = (currentSection + 1) % {total_sections};
-            showSection(next);
-        }}
-
-        // Keyboard shortcuts:
-        // X => next item, Z => previous item, C => next board
-        document.addEventListener('keydown', (e) => {{
-            // Ignore events when focused on inputs (safety)
-            const active = document.activeElement;
-            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
-
-            if (e.key === 'x' || e.key === 'X') handleNavigation('forward');
-            if (e.key === 'z' || e.key === 'Z') handleNavigation('back');
-            if (e.key === 'c' || e.key === 'C') switchBoard();
-        }});
-
-        // Initialize the first section on load
-        showSection(0);
-    </script>
-</body>
-</html>"#,
-        tabs = tabs.join("\n"),
-        sections = sections.join("\n"),
-        total_sections = items.len()
-    )
+    // Inject the generated content into templates
+    let script = JS_TEMPLATE.replace("{{TOTAL_SECTIONS}}", &items.len().to_string());
+    
+    HTML_TEMPLATE
+        .replace("{{STYLES}}", CSS_TEMPLATE)
+        .replace("{{TABS}}", &tabs.join("\n"))
+        .replace("{{SECTIONS}}", &sections.join("\n"))
+        .replace("{{SCRIPT}}", &script)
 }
 
 // gets the 4chan video links from the gif board
