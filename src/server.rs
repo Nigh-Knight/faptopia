@@ -102,8 +102,9 @@ impl AppServer {
                     );
                 let _ = request.respond(response);
             }
-            Err(_) => {
-                // File not found
+            Err(e) => {
+                // File not found - log the error for debugging
+                eprintln!("File not found: {} (error: {})", file_path, e);
                 let response = Response::from_string("File not found")
                     .with_status_code(StatusCode(404));
                 let _ = request.respond(response);
