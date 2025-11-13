@@ -187,32 +187,38 @@ function parseThreadUrl(text) {
     return match ? match[1] : null;
 }
 
-// fetch4chanThread: fetches thread data from 4chan API and extracts video URLs
+// fetch4chanThread: fetches thread data from local API
 async function fetch4chanThread(threadId) {
     try {
-        const response = await fetch(`https://a.4cdn.org/gif/thread/${threadId}.json`);
+        console.log('Fetching thread:', threadId);
+        
+        // Call local API
+        const localUrl = `http://localhost:8080/api/thread/${threadId}`;
+        console.log('Fetch URL:', localUrl);
+        
+        const response = await fetch(localUrl);
         
         if (!response.ok) {
             throw new Error(`Failed to fetch thread: ${response.status}`);
         }
         
         const data = await response.json();
+        console.log('Thread data received:', data);
         
-        // Extract video URLs from posts
-        const videoUrls = [];
-        if (data.posts) {
-            for (const post of data.posts) {
-                if (post.ext && (post.ext === '.webm' || post.ext === '.mp4') && post.tim) {
-                    const videoUrl = `https://i.4cdn.org/gif/${post.tim}${post.ext}`;
-                    videoUrls.push(videoUrl);
-                }
-            }
+        if (!data.success) {
+            throw new Error(data.error || 'Unknown error');
         }
         
-        return videoUrls;
+        return data.videos;
     } catch (error) {
         console.error('Error fetching 4chan thread:', error);
-        throw new Error('Failed to fetch thread data. Please check the URL and try again.');
+        
+        // Check if it's a network error (server not running)
+        if (error.message.includes('Failed to fetch') || error.name === 'TypeError') {
+            throw new Error('Server not running. Please run: faptopia serve');
+        }
+        
+        throw error;
     }
 }
 
@@ -254,10 +260,10 @@ async function addThreadTab(threadId) {
     showLoading();
     
     try {
-        // Fetch video URLs from 4chan
+        // Fetch video URLs from local API
         const videoUrls = await fetch4chanThread(threadId);
         
-        if (videoUrls.length === 0) {
+        if (!videoUrls || videoUrls.length === 0) {
             throw new Error('No videos found in this thread.');
         }
         
@@ -349,10 +355,12 @@ function handleDrop(event) {
     
     // Extract text from dataTransfer
     const text = event.dataTransfer.getData('text');
+    console.log('Dropped text:', text);
     
     // Parse 4chan thread URL
     const threadId = parseThreadUrl(text);
-    
+    console.log('Parsed thread ID:', threadId);
+
     if (threadId) {
         addThreadTab(threadId);
     } else {

@@ -2,9 +2,11 @@ use clap::{Args, Parser, Subcommand};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs;    
 use std::io;
 use ureq;
+
+mod server;
 
 struct MediaItem {
     url: String,
@@ -69,11 +71,20 @@ enum Commands {
     Reddit(SubReddit),
     #[clap(name = "4chan")]
     FourChan(ThreadId),
+    Serve(ServeArgs),
 }
 
 #[derive(Args)]
 struct ThreadId {
     thread: Option<Vec<u64>>,
+    
+    /// Start HTTP server after generating HTML
+    #[arg(long, default_value = "false")]
+    serve: bool,
+    
+    /// Port to run the server on (only with --serve)
+    #[arg(short, long, default_value = "8080")]
+    port: u16,
 }
 
 #[derive(Args)]
@@ -81,13 +92,20 @@ struct SubReddit {
     name: Option<Vec<String>>,
 }
 
+#[derive(Args)]
+struct ServeArgs {
+    /// Port to run the server on
+    #[arg(short, long, default_value = "8080")]
+    port: u16,
+}
+
 fn main() -> io::Result<()> {
     let cli: Cli = Cli::parse();
 
     // functionality for 4chan | allows you to do this: faptopia 4chan [thread id]
     match &cli.command {
-        Commands::FourChan(id) => {
-            if let Some(ids) = &id.thread {
+        Commands::FourChan(args) => {
+            if let Some(ids) = &args.thread {
                 let mut thread_items = Vec::new();
                 for id in ids {
                     match fetch_video_links_4chan(&[*id]) {
@@ -105,13 +123,23 @@ fn main() -> io::Result<()> {
                     }
                 }
                 save_gallery(thread_items, "faptopia_4chan.html")?;
+                
+                // If --serve flag is set, start the server
+                if args.serve {
+                    println!("\nStarting server...\n");
+                    let server = server::AppServer::new(args.port);
+                    if let Err(e) = server.start() {
+                        eprintln!("Server error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             } else {
                 println!("INPUT A THREAD ID");
             }
         }
         // functionality for reddit | allows you to do this: faptopia reddit [subreddit:modifier:time]
-        Commands::Reddit(sub_reddit) => {
-            if let Some(names) = &sub_reddit.name {
+        Commands::Reddit(args) => {
+            if let Some(names) = &args.name {
                 let mut subreddit_items = Vec::new();
                 for x in names {
                     let parts: Vec<&str> = x.split(':').collect();
@@ -139,6 +167,14 @@ fn main() -> io::Result<()> {
                 save_gallery(subreddit_items, "faptopia_reddit.html")?;
             } else {
                 println!("INPUT A SUBREDDIT PAGE");
+            }
+        }
+        Commands::Serve(args) => {
+            // Standalone server mode - serve existing HTML files
+            let server = server::AppServer::new(args.port);
+            if let Err(e) = server.start() {
+                eprintln!("Server error: {}", e);
+                std::process::exit(1);
             }
         }
     }
@@ -249,7 +285,7 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
 }
 
 // gets the 4chan video links from the gif board
-fn fetch_video_links_4chan(thread_ids: &[u64]) -> Result<Vec<String>, ureq::Error> {
+pub fn fetch_video_links_4chan(thread_ids: &[u64]) -> Result<Vec<String>, ureq::Error> {
     let mut all_links = Vec::new();
     for id in thread_ids {
         let url = format!("https://a.4cdn.org/gif/thread/{}.json", id);
