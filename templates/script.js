@@ -306,6 +306,7 @@ async function addThreadTab(threadId) {
             video.loop = true;
             video.muted = true;
             video.preload = 'none';
+            video.controls = true;
             
             item.appendChild(video);
             galleryContainer.appendChild(item);

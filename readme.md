@@ -67,7 +67,7 @@ faptopia 4chan 123456789
 ```
 This creates `faptopia_4chan.html` with a gallery of videos from the specified thread.
 
-Multiple threads example:
+Multiple threads example:v
 ```bash
 faptopia 4chan 123456789 987654321
 ```
