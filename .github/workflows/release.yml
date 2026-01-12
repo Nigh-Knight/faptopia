@@ -9,29 +9,40 @@ on:
 jobs:
   build:
     name: Build ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
             os: linux
+            runner: ubuntu-latest
             ext: ""
           - target: x86_64-pc-windows-msvc
             os: windows
+            runner: ubuntu-latest
             ext: ".exe"
           - target: x86_64-apple-darwin
             os: macos
+            runner: macos-latest
             ext: ""
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
-        uses: houseabsolute/actions-rust-cross@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          command: build
-          target: ${{ matrix.target }}
-          args: "--release"
-          strip: true  # Reduces binary size
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (Linux only)
+        if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux/macOS only)
+        if: matrix.os != 'windows'
+        run: strip target/${{ matrix.target }}/release/faptopia
 
       - name: Rename binary
         run: |
