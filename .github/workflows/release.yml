@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         target:
-          - x86_64-unknown-linux-gnu   # Linux
+          - x86_64-unknown-linux-musl  # Linux (statically linked)
           - x86_64-pc-windows-msvc      # Windows
           - x86_64-apple-darwin         # macOS
     steps:
