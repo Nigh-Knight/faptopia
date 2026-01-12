@@ -197,6 +197,40 @@ The generated HTML files remain **fully standalone** and work without the server
 
 ## Troubleshooting
 
+### Linux executable won't run
+
+If you downloaded a pre-built Linux binary and it won't run after `chmod +x faptopia`:
+
+**Check what error you're getting:**
+```bash
+./faptopia
+```
+
+**Common issues:**
+
+1. **"No such file or directory"** - This usually means missing shared library dependencies. Check with:
+   ```bash
+   ldd ./faptopia
+   ```
+
+2. **Glibc version mismatch** - Older Linux systems may not have the required glibc version.
+
+**Solutions:**
+
+- **Use the latest release** - Binaries from version 0.1.1+ are statically linked and work on all Linux distributions
+- **Build from source** - This ensures compatibility with your system:
+  ```bash
+  git clone https://github.com/Nigh-Knight/faptopia.git
+  cd faptopia
+  cargo build --release
+  ./target/release/faptopia
+  ```
+- **Use musl target** - For maximum compatibility:
+  ```bash
+  rustup target add x86_64-unknown-linux-musl
+  cargo build --release --target x86_64-unknown-linux-musl
+  ```
+
 ### Port already in use
 
 If you see an error like "Port 8080 is already in use":
