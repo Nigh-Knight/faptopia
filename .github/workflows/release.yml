@@ -1,21 +1,30 @@
 name: Build and Release
 
 on:
-  workflow_dispatch:  
+  workflow_dispatch:  # Allow manual triggering
   push:
-    branches: [main]
+    tags:
+      - 'v*'  # Trigger on version tags like v0.1.0, v1.2.3, etc.
 
 jobs:
   build:
+    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target:
-          - x86_64-unknown-linux-musl  # Linux (statically linked)
-          - x86_64-pc-windows-msvc      # Windows
-          - x86_64-apple-darwin         # macOS
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: linux
+            ext: ""
+          - target: x86_64-pc-windows-msvc
+            os: windows
+            ext: ".exe"
+          - target: x86_64-apple-darwin
+            os: macos
+            ext: ""
     steps:
       - uses: actions/checkout@v4
+
       - name: Build
         uses: houseabsolute/actions-rust-cross@v1
         with:
@@ -23,3 +32,49 @@ jobs:
           target: ${{ matrix.target }}
           args: "--release"
           strip: true  # Reduces binary size
+
+      - name: Rename binary
+        run: |
+          cd target/${{ matrix.target }}/release
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            mv faptopia.exe faptopia-${{ matrix.os }}-x86_64.exe
+          else
+            mv faptopia faptopia-${{ matrix.os }}-x86_64
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: faptopia-${{ matrix.os }}-x86_64
+          path: target/${{ matrix.target }}/release/faptopia-${{ matrix.os }}-x86_64${{ matrix.ext }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/faptopia-linux-x86_64/faptopia-linux-x86_64
+            artifacts/faptopia-windows-x86_64/faptopia-windows-x86_64.exe
+            artifacts/faptopia-macos-x86_64/faptopia-macos-x86_64
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

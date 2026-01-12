@@ -21,13 +21,32 @@ A command-line tool for creating gallery views of media content from Reddit and 
 
 ## Installation
 
+### Option 1: Download Pre-built Binary (Recommended)
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/Nigh-Knight/faptopia/releases):
+
+- **Linux**: `faptopia-linux-x86_64` (works on all distros - statically linked)
+- **Windows**: `faptopia-windows-x86_64.exe`
+- **macOS**: `faptopia-macos-x86_64`
+
+```bash
+# Linux/macOS - make it executable:
+chmod +x faptopia-linux-x86_64
+./faptopia-linux-x86_64 --help
+
+# Optionally, move to PATH:
+sudo mv faptopia-linux-x86_64 /usr/local/bin/faptopia
+```
+
+### Option 2: Build from Source
+
 ```bash
 git clone https://github.com/Nigh-Knight/faptopia.git
 cd faptopia
 cargo build --release
 ```
 
-The binary is be available in `target/release/faptopia`
+The binary will be available in `target/release/faptopia`
 
 ## Usage
 
@@ -274,3 +293,43 @@ If the server fails to start:
 - Internet connection is required to view the media content
 - Drag-and-drop functionality works with 4chan /gif/ thread URLs only
 - The server binds to `localhost` only (not accessible from other devices on your network)
+
+## Development
+
+### Creating a Release
+
+To create a new release with pre-built binaries for all platforms:
+
+1. **Update the version** in `Cargo.toml`:
+   ```toml
+   [package]
+   version = "0.2.0"  # Bump version
+   ```
+
+2. **Commit your changes**:
+   ```bash
+   git add .
+   git commit -m "chore: bump version to 0.2.0"
+   git push origin main
+   ```
+
+3. **Create and push a version tag**:
+   ```bash
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+4. **GitHub Actions will automatically**:
+   - Build binaries for Linux (musl - works on all distros), Windows, and macOS
+   - Create a GitHub Release
+   - Attach all binaries to the release
+   - Generate release notes from commits
+
+The release will appear at: `https://github.com/Nigh-Knight/faptopia/releases`
+
+### Manual Trigger
+
+You can also trigger a build manually without creating a release:
+1. Go to Actions tab in GitHub
+2. Select "Build and Release" workflow
+3. Click "Run workflow"
