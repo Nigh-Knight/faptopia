@@ -8,12 +8,6 @@ use ureq;
 
 struct MediaItem {
     url: String,
-    media_type: MediaType,
-}
-
-enum MediaType {
-    Iframe,
-    Video,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,9 +46,31 @@ struct Thread {
     posts: Vec<Post>,
 }
 
-// gets the redgif link
+// RedGifs API response structures
+#[derive(Deserialize)]
+struct RedGifsAuthResponse {
+    token: String,
+}
+
+#[derive(Deserialize)]
+struct RedGifsGifUrls {
+    hd: Option<String>,
+    sd: String,
+}
+
+#[derive(Deserialize)]
+struct RedGifsGif {
+    urls: RedGifsGifUrls,
+}
+
+#[derive(Deserialize)]
+struct RedGifsGifResponse {
+    gif: RedGifsGif,
+}
+
+// extracts the redgif ID from iframe URLs
 static REDGIFS_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"https://www\.redgifs\.com/ifr/[a-zA-Z0-9_-]+").unwrap());
+    Lazy::new(|| Regex::new(r"https://www\.redgifs\.com/ifr/([a-zA-Z0-9_-]+)").unwrap());
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -94,10 +110,7 @@ fn main() -> io::Result<()> {
                         Ok(links) => {
                             let items = links
                                 .into_iter()
-                                .map(|url| MediaItem {
-                                    url,
-                                    media_type: MediaType::Video,
-                                })
+                                .map(|url| MediaItem { url })
                                 .collect();
                             thread_items.push((format!("Thread {}", id), items));
                         }
@@ -119,18 +132,14 @@ fn main() -> io::Result<()> {
                         // separates something like hotwife:top:month into 3 parts, subreddit, modifier and time
                         let (subreddit, modifier, time) = (parts[0], parts[1], parts[2]);
                         match fetch_media_embeds_reddit(subreddit, modifier, time) {
-                            Ok(contents) => {
-                                let items = contents
+                            Ok(urls) => {
+                                let items = urls
                                     .into_iter()
-                                    .flatten()
-                                    .map(|url| MediaItem {
-                                        url,
-                                        media_type: MediaType::Iframe,
-                                    })
+                                    .map(|url| MediaItem { url })
                                     .collect();
                                 subreddit_items.push((format!("r/{}", subreddit), items));
                             }
-                            Err(e) => eprintln!("Error: {}", e),
+                            Err(e) => eprintln!("Error fetching r/{}: {}", subreddit, e),
                         }
                     } else {
                         println!("Invalid format. Use format: subreddit:modifier:time");
@@ -176,38 +185,24 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
                 .enumerate()
                 .map(|(index, item)| {
                     let global_index = format!("{}-{}", section_index, index);
-                    match item.media_type {
-                        MediaType::Iframe => format!(
-                            r#"<div class="gallery-item" data-index="{global_index}">
-                                <iframe 
-                                    src="{}" 
-                                    frameborder="0" 
-                                    allowfullscreen 
-                                    sandbox="allow-same-origin allow-scripts"
-                                    loading="lazy"
-                                ></iframe>
-                            </div>"#,
-                            item.url
-                        ),
-                        MediaType::Video => format!(
-                            r#"<div class="gallery-item" data-index="{global_index}">
-                                <video 
-                                    controls 
-                                    {autoplay}
-                                    {muted}
-                                    playsinline
-                                    data-index="{global_index}"
-                                    preload="{preload}"
-                                >
-                                    <source src="{}" type="video/mp4">
-                                </video>
-                            </div>"#,
-                            item.url,
-                            autoplay = if index == 0 { "autoplay" } else { "" },
-                            muted = if index == 0 { "muted" } else { "" },
-                            preload = if index == 0 { "auto" } else { "none" }
-                        ),
-                    }
+                    format!(
+                        r#"<div class="gallery-item" data-index="{global_index}">
+                            <video
+                                controls
+                                {autoplay}
+                                {muted}
+                                playsinline
+                                data-index="{global_index}"
+                                preload="{preload}"
+                            >
+                                <source src="{}" type="video/mp4">
+                            </video>
+                        </div>"#,
+                        item.url,
+                        autoplay = if index == 0 { "autoplay" } else { "" },
+                        muted = if index == 0 { "muted" } else { "" },
+                        preload = if index == 0 { "auto" } else { "none" }
+                    )
                 })
                 .collect();
 
@@ -272,39 +267,81 @@ pub fn fetch_video_links_4chan(thread_ids: &[u64]) -> Result<Vec<String>, ureq::
     Ok(all_links)
 }
 
+// fetches a temporary auth token from RedGifs API
+fn fetch_redgifs_token() -> Result<String, ureq::Error> {
+    let response = ureq::get("https://api.redgifs.com/v2/auth/temporary")
+        .set("User-Agent", "rust:faptopia:v1.0")
+        .call()?;
+    let auth: RedGifsAuthResponse = response.into_json()?;
+    Ok(auth.token)
+}
 
-// gets the videos from reddit 
+// fetches the direct video URL for a RedGifs gif ID
+fn fetch_redgifs_video_url(gif_id: &str, token: &str) -> Result<String, ureq::Error> {
+    let url = format!("https://api.redgifs.com/v2/gifs/{}", gif_id.to_lowercase());
+    let response = ureq::get(&url)
+        .set("User-Agent", "rust:faptopia:v1.0")
+        .set("Authorization", &format!("Bearer {}", token))
+        .call()?;
+    let gif_response: RedGifsGifResponse = response.into_json()?;
+    Ok(gif_response.gif.urls.hd.unwrap_or(gif_response.gif.urls.sd))
+}
+
+// gets the videos from reddit via RedGifs API
 fn fetch_media_embeds_reddit(
     subreddit: &str,
     modifier: &str,
     time: &str,
-) -> Result<Vec<Option<String>>, ureq::Error> {
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let url = format!(
         "https://www.reddit.com/r/{}/{}/.json?t={}",
         subreddit, modifier, time
     );
     let response = ureq::get(&url)
-        .set("User-Agent", "rust:reddit_scraper:v1.0")
+        .set("User-Agent", "rust:faptopia:v1.0")
         .call()?;
 
     let reddit_response: RedditResponse = response.into_json()?;
 
-    let contents: Vec<Option<String>> = reddit_response
+    // Extract gif IDs from embed HTML using capture group
+    let gif_ids: Vec<String> = reddit_response
         .data
         .children
         .into_iter()
-        .map(|child| {
+        .filter_map(|child| {
             child
                 .data
                 .media_embed
                 .and_then(|embed| embed.content)
                 .and_then(|html| {
                     REDGIFS_REGEX
-                        .find(&html)
-                        .map(|mat| mat.as_str().to_string())
+                        .captures(&html)
+                        .and_then(|caps| caps.get(1))
+                        .map(|m| m.as_str().to_string())
                 })
         })
         .collect();
 
-    Ok(contents)
+    if gif_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Get auth token once for all requests
+    let token = fetch_redgifs_token()?;
+
+    // Resolve each gif ID to a video URL, skipping failures
+    let video_urls: Vec<String> = gif_ids
+        .into_iter()
+        .filter_map(|gif_id| {
+            match fetch_redgifs_video_url(&gif_id, &token) {
+                Ok(url) => Some(url),
+                Err(e) => {
+                    eprintln!("Warning: Failed to fetch video for {}: {}", gif_id, e);
+                    None
+                }
+            }
+        })
+        .collect();
+
+    Ok(video_urls)
 }
