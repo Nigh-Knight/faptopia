@@ -2,11 +2,9 @@ use clap::{Args, Parser, Subcommand};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fs;    
+use std::fs;
 use std::io;
 use ureq;
-
-mod server;
 
 struct MediaItem {
     url: String,
@@ -71,32 +69,16 @@ enum Commands {
     Reddit(SubReddit),
     #[clap(name = "4chan")]
     FourChan(ThreadId),
-    Serve(ServeArgs),
 }
 
 #[derive(Args)]
 struct ThreadId {
     thread: Option<Vec<u64>>,
-    
-    /// Start HTTP server after generating HTML
-    #[arg(long, default_value = "false")]
-    serve: bool,
-    
-    /// Port to run the server on (only with --serve)
-    #[arg(short, long, default_value = "8080")]
-    port: u16,
 }
 
 #[derive(Args)]
 struct SubReddit {
     name: Option<Vec<String>>,
-}
-
-#[derive(Args)]
-struct ServeArgs {
-    /// Port to run the server on
-    #[arg(short, long, default_value = "8080")]
-    port: u16,
 }
 
 fn main() -> io::Result<()> {
@@ -123,16 +105,6 @@ fn main() -> io::Result<()> {
                     }
                 }
                 save_gallery(thread_items, "faptopia_4chan.html")?;
-                
-                // If --serve flag is set, start the server
-                if args.serve {
-                    println!("\nStarting server...\n");
-                    let server = server::AppServer::new(args.port);
-                    if let Err(e) = server.start() {
-                        eprintln!("Server error: {}", e);
-                        std::process::exit(1);
-                    }
-                }
             } else {
                 println!("INPUT A THREAD ID");
             }
@@ -167,14 +139,6 @@ fn main() -> io::Result<()> {
                 save_gallery(subreddit_items, "faptopia_reddit.html")?;
             } else {
                 println!("INPUT A SUBREDDIT PAGE");
-            }
-        }
-        Commands::Serve(args) => {
-            // Standalone server mode - serve existing HTML files
-            let server = server::AppServer::new(args.port);
-            if let Err(e) = server.start() {
-                eprintln!("Server error: {}", e);
-                std::process::exit(1);
             }
         }
     }
