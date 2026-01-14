@@ -161,8 +161,8 @@ fn save_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> io::Res
         println!("No media items found");
         return Ok(());
     }
-    
-    let html = generate_gallery(items);
+
+    let html = generate_gallery(items, filename);
     fs::write(filename, html)?;
     println!("Gallery saved to {}", filename);
     Ok(())
@@ -173,8 +173,15 @@ const HTML_TEMPLATE: &str = include_str!("../templates/gallery.html");
 const CSS_TEMPLATE: &str = include_str!("../templates/styles.css");
 const JS_TEMPLATE: &str = include_str!("../templates/script.js");
 
-// create a horizontal scrollable gallery 
-fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
+// create a horizontal scrollable gallery
+fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> String {
+    // Determine toggle button based on current file
+    let (toggle_text, toggle_file, toggle_color) = if filename.contains("reddit") {
+        ("4chan", "faptopia_4chan.html", "#0f9d58") // Green for 4chan
+    } else {
+        ("reddit", "faptopia_reddit.html", "#ff4500") // Reddit orange/red
+    };
+
     // Generate tabs and content sections
     let (tabs, sections): (Vec<String>, Vec<String>) = items
         .iter()
@@ -235,10 +242,17 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>) -> String {
 
     // Inject the generated content into templates
     let script = JS_TEMPLATE.replace("{{TOTAL_SECTIONS}}", &items.len().to_string());
-    
+
+    // Add toggle button to switch between reddit/4chan galleries
+    let toggle_button = format!(
+        r#"<a href="{}" class="gallery-toggle" style="background: {}; margin-left: auto;">{}</a>"#,
+        toggle_file, toggle_color, toggle_text
+    );
+    let tabs_with_toggle = format!("{}\n{}", tabs.join("\n"), toggle_button);
+
     HTML_TEMPLATE
         .replace("{{STYLES}}", CSS_TEMPLATE)
-        .replace("{{TABS}}", &tabs.join("\n"))
+        .replace("{{TABS}}", &tabs_with_toggle)
         .replace("{{SECTIONS}}", &sections.join("\n"))
         .replace("{{SCRIPT}}", &script)
 }
