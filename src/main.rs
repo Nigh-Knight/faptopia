@@ -349,8 +349,7 @@ fn fetch_media_embeds_reddit(
         .filter_map(|gif_id| {
             match fetch_redgifs_video_url(&gif_id, &token) {
                 Ok(url) => Some(url),
-                Err(e) => {
-                    eprintln!("Warning: Failed to fetch video for {}: {}", gif_id, e);
+                Err(_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   e) => {
                     None
                 }
             }
