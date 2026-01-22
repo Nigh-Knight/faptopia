@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use ureq;
 
 struct MediaItem {
@@ -72,6 +72,11 @@ struct RedGifsGifResponse {
 static REDGIFS_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"https://www\.redgifs\.com/ifr/([a-zA-Z0-9_-]+)").unwrap());
 
+// parses Reddit URLs to extract subreddit, modifier, and time parameters
+static REDDIT_URL_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^https?://(?:www\.)?reddit\.com/r/([^/]+)/([^/?]+)(?:/?\?t=([^&]+))?").unwrap()
+});
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
@@ -97,6 +102,62 @@ struct SubReddit {
     name: Option<Vec<String>>,
 }
 
+enum RedditInput {
+    FormatString {
+        subreddit: String,
+        modifier: String,
+        time: String,
+    },
+    Url {
+        subreddit: String,
+        modifier: String,
+        time: String,
+    },
+}
+
+fn parse_reddit_input(input: &str) -> Result<RedditInput, String> {
+    if input.starts_with("http://") || input.starts_with("https://") {
+        if let Some(caps) = REDDIT_URL_REGEX.captures(input) {
+            let subreddit = caps
+                .get(1)
+                .ok_or("Missing subreddit in URL")?
+                .as_str()
+                .to_string();
+            let modifier = caps
+                .get(2)
+                .ok_or("Missing modifier in URL")?
+                .as_str()
+                .to_string();
+            let time = caps
+                .get(3)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "all".to_string());
+
+            return Ok(RedditInput::Url {
+                subreddit,
+                modifier,
+                time,
+            });
+        } else {
+            return Err(
+                "Invalid Reddit URL format. Expected: https://reddit.com/r/SUBREDDIT/MODIFIER/?t=TIME"
+                    .to_string(),
+            );
+        }
+    }
+
+    let parts: Vec<&str> = input.split(':').collect();
+    if parts.len() == 3 {
+        Ok(RedditInput::FormatString {
+            subreddit: parts[0].to_string(),
+            modifier: parts[1].to_string(),
+            time: parts[2].to_string(),
+        })
+    } else {
+        Err("Invalid format. Use 'subreddit:modifier:time' or a full Reddit URL".to_string())
+    }
+}
+
 fn main() -> io::Result<()> {
     let cli: Cli = Cli::parse();
 
@@ -108,10 +169,7 @@ fn main() -> io::Result<()> {
                 for id in ids {
                     match fetch_video_links_4chan(&[*id]) {
                         Ok(links) => {
-                            let items = links
-                                .into_iter()
-                                .map(|url| MediaItem { url })
-                                .collect();
+                            let items = links.into_iter().map(|url| MediaItem { url }).collect();
                             thread_items.push((format!("Thread {}", id), items));
                         }
                         Err(e) => eprintln!("Error fetching thread {}: {}", id, e),
@@ -127,22 +185,31 @@ fn main() -> io::Result<()> {
             if let Some(names) = &args.name {
                 let mut subreddit_items = Vec::new();
                 for x in names {
-                    let parts: Vec<&str> = x.split(':').collect();
-                    if parts.len() == 3 {
-                        // separates something like hotwife:top:month into 3 parts, subreddit, modifier and time
-                        let (subreddit, modifier, time) = (parts[0], parts[1], parts[2]);
-                        match fetch_media_embeds_reddit(subreddit, modifier, time) {
-                            Ok(urls) => {
-                                let items = urls
-                                    .into_iter()
-                                    .map(|url| MediaItem { url })
-                                    .collect();
-                                subreddit_items.push((format!("r/{}", subreddit), items));
+                    match parse_reddit_input(x) {
+                        Ok(input) => {
+                            let (subreddit, modifier, time) = match input {
+                                RedditInput::FormatString {
+                                    subreddit,
+                                    modifier,
+                                    time,
+                                }
+                                | RedditInput::Url {
+                                    subreddit,
+                                    modifier,
+                                    time,
+                                } => (subreddit, modifier, time),
+                            };
+
+                            match fetch_media_embeds_reddit(&subreddit, &modifier, &time) {
+                                Ok(urls) => {
+                                    let items =
+                                        urls.into_iter().map(|url| MediaItem { url }).collect();
+                                    subreddit_items.push((format!("r/{}", subreddit), items));
+                                }
+                                Err(e) => eprintln!("Error fetching r/{}: {}", subreddit, e),
                             }
-                            Err(e) => eprintln!("Error fetching r/{}: {}", subreddit, e),
                         }
-                    } else {
-                        println!("Invalid format. Use format: subreddit:modifier:time");
+                        Err(e) => eprintln!("Invalid input '{}': {}", x, e),
                     }
                 }
                 save_gallery(subreddit_items, "faptopia_reddit.html")?;
@@ -155,7 +222,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-// with an input of links to the videos(items) and html filename to write to, creates a scrollable gallery 
+// with an input of links to the videos(items) and html filename to write to, creates a scrollable gallery
 fn save_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> io::Result<()> {
     if items.is_empty() {
         println!("No media items found");
@@ -230,7 +297,11 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
                         {}
                     </div>
                 </div>"#,
-                if section_index == 0 { " active" } else { " hidden" },
+                if section_index == 0 {
+                    " active"
+                } else {
+                    " hidden"
+                },
                 section_index,
                 section_index,
                 gallery_items
@@ -344,17 +415,28 @@ fn fetch_media_embeds_reddit(
     let token = fetch_redgifs_token()?;
 
     // Resolve each gif ID to a video URL, skipping failures
+    let total_gifs = gif_ids.len();
     let video_urls: Vec<String> = gif_ids
         .into_iter()
-        .filter_map(|gif_id| {
+        .enumerate()
+        .filter_map(|(idx, gif_id)| {
+            let progress = ((idx + 1) as f32 / total_gifs as f32 * 100.0) as u8;
+            print!(
+                "\rFetching videos: {}% ({}/{})",
+                progress,
+                idx + 1,
+                total_gifs
+            );
+            io::stdout().flush().ok();
+
             match fetch_redgifs_video_url(&gif_id, &token) {
                 Ok(url) => Some(url),
-                Err(_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   e) => {
-                    None
-                }
+                Err(_) => None, // Silently skip failures per user requirement
             }
         })
         .collect();
+
+    println!("\rFetched {} videos successfully", video_urls.len());
 
     Ok(video_urls)
 }
