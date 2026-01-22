@@ -19,7 +19,7 @@ jobs:
             ext: ""
           - target: x86_64-pc-windows-msvc
             os: windows
-            runner: ubuntu-latest
+            runner: windows-latest
             ext: ".exe"
           - target: x86_64-apple-darwin
             os: macos
@@ -44,14 +44,18 @@ jobs:
         if: matrix.os != 'windows'
         run: strip target/${{ matrix.target }}/release/faptopia
 
-      - name: Rename binary
+      - name: Rename binary (Windows)
+        if: matrix.os == 'windows'
         run: |
           cd target/${{ matrix.target }}/release
-          if [ "${{ matrix.os }}" = "windows" ]; then
-            mv faptopia.exe faptopia-${{ matrix.os }}-x86_64.exe
-          else
-            mv faptopia faptopia-${{ matrix.os }}-x86_64
-          fi
+          mv faptopia.exe faptopia-${{ matrix.os }}-x86_64.exe
+        shell: bash
+
+      - name: Rename binary (Unix)
+        if: matrix.os != 'windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          mv faptopia faptopia-${{ matrix.os }}-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
