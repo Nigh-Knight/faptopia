@@ -1,5 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use once_cell::sync::Lazy;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -95,11 +97,15 @@ enum Commands {
 #[derive(Args)]
 struct ThreadId {
     thread: Option<Vec<u64>>,
+    #[arg(long, help = "Shuffle videos in a random order")]
+    random: bool,
 }
 
 #[derive(Args)]
 struct SubReddit {
     name: Option<Vec<String>>,
+    #[arg(long, help = "Shuffle videos in a random order")]
+    random: bool,
 }
 
 enum RedditInput {
@@ -169,7 +175,11 @@ fn main() -> io::Result<()> {
                 for id in ids {
                     match fetch_video_links_4chan(&[*id]) {
                         Ok(links) => {
-                            let items = links.into_iter().map(|url| MediaItem { url }).collect();
+                            let mut items: Vec<MediaItem> =
+                                links.into_iter().map(|url| MediaItem { url }).collect();
+                            if args.random {
+                                items.shuffle(&mut thread_rng());
+                            }
                             thread_items.push((format!("Thread {}", id), items));
                         }
                         Err(e) => eprintln!("Error fetching thread {}: {}", id, e),
@@ -202,8 +212,11 @@ fn main() -> io::Result<()> {
 
                             match fetch_media_embeds_reddit(&subreddit, &modifier, &time) {
                                 Ok(urls) => {
-                                    let items =
+                                    let mut items: Vec<MediaItem> =
                                         urls.into_iter().map(|url| MediaItem { url }).collect();
+                                    if args.random {
+                                        items.shuffle(&mut thread_rng());
+                                    }
                                     subreddit_items.push((format!("r/{}", subreddit), items));
                                 }
                                 Err(e) => eprintln!("Error fetching r/{}: {}", subreddit, e),
