@@ -98,3 +98,24 @@ iframe, video {
     font-size: 1.2rem;
     z-index: 100;
 }
+#nav-hint.auto-scroll-active {
+    border: 2px solid #ff4444;
+}
+.autoscroll-alert {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #ff4444;
+    color: white;
+    padding: 10px 24px;
+    border-radius: 20px;
+    font-size: 1.1rem;
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+.autoscroll-alert.show {
+    opacity: 1;
+}

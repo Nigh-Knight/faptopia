@@ -4,6 +4,8 @@ let currentSection = 0;
 let totalSections = 0;
 // Per-board remembered focused item index, so switching boards restores position
 let currentIndices = [];
+// Auto-scroll mode: when enabled, videos advance automatically on end
+let autoScroll = false;
 
 // closeTab: removes a tab and its associated section from the DOM
 function closeTab(event, sectionIndex) {
@@ -135,6 +137,35 @@ function updateVideoFocus(sectionIndex, itemIndex) {
     });
 }
 
+// toggleAutoScroll: enable/disable auto-advance on video end, update nav hint and show alert.
+function toggleAutoScroll() {
+    autoScroll = !autoScroll;
+    const navHint = document.getElementById('nav-hint');
+    const alert = document.getElementById('autoscroll-alert');
+    if (navHint) navHint.classList.toggle('auto-scroll-active', autoScroll);
+    if (alert) {
+        alert.textContent = autoScroll ? 'Auto-scroll activated' : 'Auto-scroll deactivated';
+        alert.classList.add('show');
+        clearTimeout(alert._hideTimer);
+        alert._hideTimer = setTimeout(() => alert.classList.remove('show'), 1500);
+    }
+}
+
+// attachVideoEndedListeners: wire up 'ended' events on all videos in a section.
+function attachVideoEndedListeners(sectionIndex) {
+    const videos = document.querySelectorAll(`#gallery-${sectionIndex} video`);
+    videos.forEach((video, i) => {
+        // Remove any previous listener to avoid duplicates
+        video.removeEventListener('ended', video._autoScrollHandler);
+        video._autoScrollHandler = () => {
+            if (autoScroll && currentSection === sectionIndex && currentIndices[sectionIndex] === i) {
+                handleNavigation('forward');
+            }
+        };
+        video.addEventListener('ended', video._autoScrollHandler);
+    });
+}
+
 // scrollToIndex: scrolls the given section to item `index` and updates remembered index + focus.
 function scrollToIndex(sectionIndex, index) {
     const gallery = document.getElementById(`gallery-${sectionIndex}`);
@@ -168,21 +199,58 @@ function switchBoard() {
     showSection(next);
 }
 
+// saveCurrentVideo: downloads the currently focused video to disk
+function saveCurrentVideo() {
+    const gallery = document.getElementById(`gallery-${currentSection}`);
+    if (!gallery) return;
+    const items = gallery.querySelectorAll('.gallery-item');
+    const item = items[currentIndices[currentSection]];
+    if (!item) return;
+    const source = item.querySelector('video source');
+    if (!source || !source.src) return;
+
+    const url = source.src;
+    const filename = url.split('/').pop().split('?')[0] || 'video.mp4';
+
+    fetch(url)
+        .then(res => res.blob())
+        .then(blob => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(a.href);
+        })
+        .catch(e => console.error('Download failed:', e));
+}
+
 // Keyboard shortcuts:
-// X => next item, Z => previous item, C => next board
+// X => next item, Z => previous item, C => next board, Ctrl+S => save current video
 document.addEventListener('keydown', (e) => {
     // Ignore events when focused on inputs (safety)
     const active = document.activeElement;
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
+    if (e.ctrlKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        saveCurrentVideo();
+        return;
+    }
+
     if (e.key === 'x' || e.key === 'X') handleNavigation('forward');
     if (e.key === 'z' || e.key === 'Z') handleNavigation('back');
     if (e.key === 'c' || e.key === 'C') switchBoard();
+    if (e.key === 'p' || e.key === 'P') toggleAutoScroll();
 });
 
 // Initialize totalSections based on initial section count
 totalSections = document.querySelectorAll('.gallery-section').length;
 currentIndices = new Array(totalSections).fill(0);
+
+// Attach auto-scroll ended listeners for all sections
+for (let i = 0; i < totalSections; i++) {
+    attachVideoEndedListeners(i);
+}
 
 // Initialize the first section on load
 showSection(0);

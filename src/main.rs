@@ -30,6 +30,7 @@ struct Child {
 #[derive(Debug, Serialize, Deserialize)]
 struct Listing {
     children: Vec<Child>,
+    after: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,6 +86,8 @@ static REDDIT_URL_REGEX: Lazy<Regex> = Lazy::new(|| {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    #[arg(long, global = true, help = "Shuffle videos in a random order")]
+    random: bool,
 }
 
 #[derive(Subcommand)]
@@ -97,15 +100,13 @@ enum Commands {
 #[derive(Args)]
 struct ThreadId {
     thread: Option<Vec<u64>>,
-    #[arg(long, help = "Shuffle videos in a random order")]
-    random: bool,
 }
 
 #[derive(Args)]
 struct SubReddit {
     name: Option<Vec<String>>,
-    #[arg(long, help = "Shuffle videos in a random order")]
-    random: bool,
+    #[arg(long, default_value_t = 25, help = "Number of posts to fetch (default: 25)")]
+    limit: usize,
 }
 
 enum RedditInput {
@@ -168,6 +169,7 @@ fn main() -> io::Result<()> {
     let cli: Cli = Cli::parse();
 
     // functionality for 4chan | allows you to do this: faptopia 4chan [thread id]
+    let random = cli.random;
     match &cli.command {
         Commands::FourChan(args) => {
             if let Some(ids) = &args.thread {
@@ -177,7 +179,7 @@ fn main() -> io::Result<()> {
                         Ok(links) => {
                             let mut items: Vec<MediaItem> =
                                 links.into_iter().map(|url| MediaItem { url }).collect();
-                            if args.random {
+                            if random {
                                 items.shuffle(&mut thread_rng());
                             }
                             thread_items.push((format!("Thread {}", id), items));
@@ -210,11 +212,11 @@ fn main() -> io::Result<()> {
                                 } => (subreddit, modifier, time),
                             };
 
-                            match fetch_media_embeds_reddit(&subreddit, &modifier, &time) {
+                            match fetch_media_embeds_reddit(&subreddit, &modifier, &time, args.limit) {
                                 Ok(urls) => {
                                     let mut items: Vec<MediaItem> =
                                         urls.into_iter().map(|url| MediaItem { url }).collect();
-                                    if args.random {
+                                    if random {
                                         items.shuffle(&mut thread_rng());
                                     }
                                     subreddit_items.push((format!("r/{}", subreddit), items));
@@ -390,35 +392,61 @@ fn fetch_media_embeds_reddit(
     subreddit: &str,
     modifier: &str,
     time: &str,
+    limit: usize,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let url = format!(
-        "https://www.reddit.com/r/{}/{}/.json?t={}",
-        subreddit, modifier, time
-    );
-    let response = ureq::get(&url)
-        .set("User-Agent", "rust:faptopia:v1.0")
-        .call()?;
+    let mut gif_ids: Vec<String> = Vec::new();
+    let mut after: Option<String> = None;
 
-    let reddit_response: RedditResponse = response.into_json()?;
+    // Paginate until we have enough gif IDs or run out of posts.
+    // Always request 100 per page (Reddit's max) since many posts won't be RedGifs embeds.
+    while gif_ids.len() < limit {
+        let per_page = 100;
+        let url = match &after {
+            Some(cursor) => format!(
+                "https://www.reddit.com/r/{}/{}/.json?t={}&limit={}&after={}",
+                subreddit, modifier, time, per_page, cursor
+            ),
+            None => format!(
+                "https://www.reddit.com/r/{}/{}/.json?t={}&limit={}",
+                subreddit, modifier, time, per_page
+            ),
+        };
 
-    // Extract gif IDs from embed HTML using capture group
-    let gif_ids: Vec<String> = reddit_response
-        .data
-        .children
-        .into_iter()
-        .filter_map(|child| {
-            child
-                .data
-                .media_embed
-                .and_then(|embed| embed.content)
-                .and_then(|html| {
-                    REDGIFS_REGEX
-                        .captures(&html)
-                        .and_then(|caps| caps.get(1))
-                        .map(|m| m.as_str().to_string())
-                })
-        })
-        .collect();
+        let response = ureq::get(&url)
+            .set("User-Agent", "rust:faptopia:v1.0")
+            .call()?;
+        let reddit_response: RedditResponse = response.into_json()?;
+
+        let next_cursor = reddit_response.data.after.clone();
+        let children = reddit_response.data.children;
+        let total_posts = children.len();
+
+        let page_ids: Vec<String> = children
+            .into_iter()
+            .filter_map(|child| {
+                child
+                    .data
+                    .media_embed
+                    .and_then(|embed| embed.content)
+                    .and_then(|html| {
+                        REDGIFS_REGEX
+                            .captures(&html)
+                            .and_then(|caps| caps.get(1))
+                            .map(|m| m.as_str().to_string())
+                    })
+            })
+            .collect();
+
+        gif_ids.extend(page_ids);
+
+        // Stop if Reddit has no more pages or returned no posts at all
+        match next_cursor {
+            Some(cursor) if total_posts > 0 => after = Some(cursor),
+            _ => break,
+        }
+    }
+
+    gif_ids.truncate(limit);
 
     if gif_ids.is_empty() {
         return Ok(vec![]);
@@ -435,10 +463,11 @@ fn fetch_media_embeds_reddit(
         .filter_map(|(idx, gif_id)| {
             let progress = ((idx + 1) as f32 / total_gifs as f32 * 100.0) as u8;
             print!(
-                "\rFetching videos: {}% ({}/{})",
+                "\rFetching videos: {}% ({}/{}) from r/{}",
                 progress,
                 idx + 1,
-                total_gifs
+                total_gifs,
+                subreddit
             );
             io::stdout().flush().ok();
 
