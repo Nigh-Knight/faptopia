@@ -4,12 +4,19 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
+use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 use ureq;
 
 struct MediaItem {
     url: String,
+    gif_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,6 +78,41 @@ struct RedGifsGifResponse {
     gif: RedGifsGif,
 }
 
+// Cache structures for storing resolved RedGifs URLs
+#[derive(Serialize, Deserialize)]
+struct CacheEntry {
+    url: String,
+    fetched_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct UrlCache {
+    redgifs: HashMap<String, CacheEntry>,
+}
+
+const CACHE_FILE: &str = ".faptopia_cache.json";
+const CACHE_TTL_SECS: u64 = 4 * 60 * 60; // 4 hours
+
+fn load_cache() -> UrlCache {
+    fs::read_to_string(CACHE_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_cache(cache: &UrlCache) {
+    if let Ok(json) = serde_json::to_string(cache) {
+        let _ = fs::write(CACHE_FILE, json);
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 // extracts the redgif ID from iframe URLs
 static REDGIFS_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"https://www\.redgifs\.com/ifr/([a-zA-Z0-9_-]+)").unwrap());
@@ -88,6 +130,12 @@ struct Cli {
     command: Commands,
     #[arg(long, global = true, help = "Shuffle videos in a random order")]
     random: bool,
+    #[arg(long, global = true, help = "Start local server for mobile access")]
+    serve: bool,
+    #[arg(long, global = true, default_value_t = 6969, help = "Port for local server")]
+    port: u16,
+    #[arg(long, global = true, help = "Deploy to Cloudflare Pages (PWA with HTTPS)")]
+    deploy: bool,
 }
 
 #[derive(Subcommand)]
@@ -178,7 +226,7 @@ fn main() -> io::Result<()> {
                     match fetch_video_links_4chan(&[*id]) {
                         Ok(links) => {
                             let mut items: Vec<MediaItem> =
-                                links.into_iter().map(|url| MediaItem { url }).collect();
+                                links.into_iter().map(|url| MediaItem { url, gif_id: None }).collect();
                             if random {
                                 items.shuffle(&mut thread_rng());
                             }
@@ -213,9 +261,7 @@ fn main() -> io::Result<()> {
                             };
 
                             match fetch_media_embeds_reddit(&subreddit, &modifier, &time, args.limit) {
-                                Ok(urls) => {
-                                    let mut items: Vec<MediaItem> =
-                                        urls.into_iter().map(|url| MediaItem { url }).collect();
+                                Ok(mut items) => {
                                     if random {
                                         items.shuffle(&mut thread_rng());
                                     }
@@ -234,6 +280,14 @@ fn main() -> io::Result<()> {
         }
     }
 
+    if cli.deploy {
+        deploy_to_cloudflare()?;
+    }
+
+    if cli.serve {
+        serve_gallery(cli.port)?;
+    }
+
     Ok(())
 }
 
@@ -250,10 +304,163 @@ fn save_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> io::Res
     Ok(())
 }
 
+// deploys gallery to Cloudflare Pages with video proxy worker
+fn deploy_to_cloudflare() -> io::Result<()> {
+    let deploy_dir = ".cf_deploy";
+    fs::create_dir_all(deploy_dir)?;
+
+    // Copy gallery files with proxy/on-demand URLs
+    for filename in &["faptopia_reddit.html", "faptopia_4chan.html"] {
+        if std::path::Path::new(filename).exists() {
+            let html = fs::read_to_string(filename)?;
+            let html = rewrite_html_for_proxy(&html);
+            fs::write(format!("{}/{}", deploy_dir, filename), html)?;
+        }
+    }
+
+    // Index page redirects to whichever gallery exists
+    let index_target = if std::path::Path::new("faptopia_reddit.html").exists() {
+        "faptopia_reddit.html"
+    } else {
+        "faptopia_4chan.html"
+    };
+    fs::write(
+        format!("{}/index.html", deploy_dir),
+        format!(r#"<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url={}"></head></html>"#, index_target),
+    )?;
+
+    // PWA files
+    fs::write(
+        format!("{}/manifest.json", deploy_dir),
+        include_str!("../templates/manifest.json"),
+    )?;
+    fs::write(
+        format!("{}/sw.js", deploy_dir),
+        include_str!("../templates/sw.js"),
+    )?;
+    fs::write(
+        format!("{}/icon.svg", deploy_dir),
+        include_str!("../templates/icon.svg"),
+    )?;
+
+    // Cloudflare Worker for video proxying
+    fs::write(
+        format!("{}/_worker.js", deploy_dir),
+        include_str!("../templates/_worker.js"),
+    )?;
+
+    println!("Deploying to Cloudflare Pages...");
+
+    let status = Command::new("wrangler")
+        .args(["pages", "deploy", deploy_dir, "--project-name", "faptopia", "--branch", "main", "--commit-dirty=true"])
+        .status()?;
+
+    let _ = fs::remove_dir_all(deploy_dir);
+
+    if status.success() {
+        println!("Deployed! Visit https://faptopia.pages.dev");
+        println!("Add to Home Screen on your phone for full PWA experience.");
+    } else {
+        eprintln!("Deploy failed. Run 'wrangler login' to authenticate.");
+    }
+
+    Ok(())
+}
+
+// gets the local network IP address
+fn get_local_ip() -> String {
+    std::net::UdpSocket::bind("0.0.0.0:0")
+        .and_then(|socket| {
+            socket.connect("8.8.8.8:80")?;
+            socket.local_addr()
+        })
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+// starts a local HTTP server for mobile PWA access
+fn serve_gallery(port: u16) -> io::Result<()> {
+    let serve_dir = ".faptopia_serve";
+    fs::create_dir_all(serve_dir)?;
+
+    // Copy gallery files, rewriting video URLs to go through local proxy
+    for filename in &["faptopia_reddit.html", "faptopia_4chan.html"] {
+        if std::path::Path::new(filename).exists() {
+            let html = fs::read_to_string(filename)?;
+            let html = rewrite_html_for_proxy(&html);
+            fs::write(format!("{}/{}", serve_dir, filename), html)?;
+        }
+    }
+
+    // Default index.html redirects to whichever gallery exists
+    let index_target = if std::path::Path::new("faptopia_reddit.html").exists() {
+        "faptopia_reddit.html"
+    } else {
+        "faptopia_4chan.html"
+    };
+    fs::write(
+        format!("{}/index.html", serve_dir),
+        format!(r#"<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url={}"></head></html>"#, index_target),
+    )?;
+
+    // Write PWA files for Add to Home Screen
+    fs::write(
+        format!("{}/manifest.json", serve_dir),
+        include_str!("../templates/manifest.json"),
+    )?;
+    fs::write(
+        format!("{}/icon.svg", serve_dir),
+        include_str!("../templates/icon.svg"),
+    )?;
+
+    // Write the proxy server script
+    let server_script = format!("{}/server.py", serve_dir);
+    fs::write(&server_script, include_str!("../templates/server.py"))?;
+
+    let ip = get_local_ip();
+    println!("Serving gallery at:");
+    println!("  Local:   http://localhost:{}", port);
+    println!("  Mobile:  http://{}:{}", ip, port);
+    println!();
+    println!("Open the Mobile URL on your phone and tap 'Add to Home Screen' for PWA.");
+    println!("Press Ctrl+C to stop.");
+
+    let status = Command::new("python3")
+        .args([&server_script, &port.to_string(), serve_dir])
+        .status()?;
+
+    // Clean up
+    let _ = fs::remove_dir_all(serve_dir);
+
+    if !status.success() {
+        eprintln!("Server exited unexpectedly.");
+    }
+
+    Ok(())
+}
+
 // Template files embedded at compile time
 const HTML_TEMPLATE: &str = include_str!("../templates/gallery.html");
 const CSS_TEMPLATE: &str = include_str!("../templates/styles.css");
 const JS_TEMPLATE: &str = include_str!("../templates/script.js");
+
+// rewrites gallery HTML for proxy/deploy: RedGifs videos use on-demand resolution,
+// 4chan videos use simple proxy
+fn rewrite_html_for_proxy(html: &str) -> String {
+    // Replace RedGifs video sources with on-demand resolution endpoint using gif IDs
+    let redgifs_re =
+        Regex::new(r#"(?s)data-gif-id="([^"]+)"(.*?)<source src="[^"]*""#).unwrap();
+    let html = redgifs_re
+        .replace_all(html, |caps: &regex::Captures| {
+            format!(
+                r#"data-gif-id="{}"{}<source src="/video/redgifs/{}""#,
+                &caps[1], &caps[2], &caps[1]
+            )
+        })
+        .to_string();
+    // 4chan CDN URLs are permanent, simple proxy is fine
+    html.replace("https://i.4cdn.org/", "/proxy/4cdn/")
+}
 
 // create a horizontal scrollable gallery
 fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> String {
@@ -274,6 +481,15 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
                 .enumerate()
                 .map(|(index, item)| {
                     let global_index = format!("{}-{}", section_index, index);
+                    let gif_id_attr = match &item.gif_id {
+                        Some(id) => format!(r#" data-gif-id="{}""#, id),
+                        None => String::new(),
+                    };
+                    let mime_type = if item.url.ends_with(".webm") {
+                        "video/webm"
+                    } else {
+                        "video/mp4"
+                    };
                     format!(
                         r#"<div class="gallery-item" data-index="{global_index}">
                             <video
@@ -281,13 +497,13 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
                                 {autoplay}
                                 {muted}
                                 playsinline
-                                data-index="{global_index}"
+                                data-index="{global_index}"{gif_id_attr}
                                 preload="{preload}"
                             >
-                                <source src="{}" type="video/mp4">
+                                <source src="{url}" type="{mime_type}">
                             </video>
                         </div>"#,
-                        item.url,
+                        url = item.url,
                         autoplay = if index == 0 { "autoplay" } else { "" },
                         muted = if index == 0 { "muted" } else { "" },
                         preload = if index == 0 { "auto" } else { "none" }
@@ -387,13 +603,13 @@ fn fetch_redgifs_video_url(gif_id: &str, token: &str) -> Result<String, ureq::Er
     Ok(gif_response.gif.urls.hd.unwrap_or(gif_response.gif.urls.sd))
 }
 
-// gets the videos from reddit via RedGifs API
+// gets the videos from reddit via RedGifs API (with caching and parallel fetching)
 fn fetch_media_embeds_reddit(
     subreddit: &str,
     modifier: &str,
     time: &str,
     limit: usize,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<MediaItem>, Box<dyn std::error::Error>> {
     let mut gif_ids: Vec<String> = Vec::new();
     let mut after: Option<String> = None;
 
@@ -448,37 +664,116 @@ fn fetch_media_embeds_reddit(
 
     gif_ids.truncate(limit);
 
+    // Deduplicate gif IDs while preserving order
+    let mut seen = HashSet::new();
+    gif_ids.retain(|id| seen.insert(id.to_lowercase()));
+
     if gif_ids.is_empty() {
         return Ok(vec![]);
     }
 
-    // Get auth token once for all requests
-    let token = fetch_redgifs_token()?;
+    // Load cache and split into cached vs uncached
+    let mut cache = load_cache();
+    let now = now_secs();
+    let mut video_urls: Vec<Option<String>> = vec![None; gif_ids.len()];
+    let mut uncached: Vec<(usize, String)> = Vec::new();
+    let mut cache_hits = 0;
 
-    // Resolve each gif ID to a video URL, skipping failures
-    let total_gifs = gif_ids.len();
-    let video_urls: Vec<String> = gif_ids
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, gif_id)| {
-            let progress = ((idx + 1) as f32 / total_gifs as f32 * 100.0) as u8;
-            print!(
-                "\rFetching videos: {}% ({}/{}) from r/{}",
-                progress,
-                idx + 1,
-                total_gifs,
-                subreddit
-            );
-            io::stdout().flush().ok();
-
-            match fetch_redgifs_video_url(&gif_id, &token) {
-                Ok(url) => Some(url),
-                Err(_) => None, // Silently skip failures per user requirement
+    for (i, gif_id) in gif_ids.iter().enumerate() {
+        let id_lower = gif_id.to_lowercase();
+        if let Some(entry) = cache.redgifs.get(&id_lower) {
+            if now - entry.fetched_at < CACHE_TTL_SECS {
+                video_urls[i] = Some(entry.url.clone());
+                cache_hits += 1;
+                continue;
             }
+        }
+        uncached.push((i, gif_id.clone()));
+    }
+
+    if cache_hits > 0 {
+        println!("{} videos loaded from cache", cache_hits);
+    }
+
+    // Fetch uncached URLs in parallel (8 concurrent requests)
+    if !uncached.is_empty() {
+        let token = fetch_redgifs_token()?;
+        let total_to_fetch = uncached.len();
+        let progress = Arc::new(AtomicUsize::new(0));
+
+        let batch_size = 8;
+        let mut fetched_results: Vec<(usize, String, String)> = Vec::new();
+
+        for chunk in uncached.chunks(batch_size) {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|(idx, gif_id)| {
+                    let idx = *idx;
+                    let gif_id = gif_id.clone();
+                    let token = token.clone();
+                    let progress = Arc::clone(&progress);
+                    let total = total_to_fetch;
+                    let sub = subreddit.to_string();
+
+                    thread::spawn(move || {
+                        let result = fetch_redgifs_video_url(&gif_id, &token).ok();
+                        let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
+                        let pct = (done as f32 / total as f32 * 100.0) as u8;
+                        print!(
+                            "\rFetching videos: {}% ({}/{}) from r/{}",
+                            pct, done, total, sub
+                        );
+                        io::stdout().flush().ok();
+                        result.map(|url| (idx, gif_id, url))
+                    })
+                })
+                .collect();
+
+            for h in handles {
+                if let Ok(Some((idx, gif_id, url))) = h.join() {
+                    fetched_results.push((idx, gif_id, url));
+                }
+            }
+        }
+
+        if total_to_fetch > 0 {
+            println!();
+        }
+
+        // Update results and cache with fetched URLs
+        for (idx, gif_id, url) in &fetched_results {
+            video_urls[*idx] = Some(url.clone());
+            cache.redgifs.insert(
+                gif_id.to_lowercase(),
+                CacheEntry {
+                    url: url.clone(),
+                    fetched_at: now,
+                },
+            );
+        }
+
+        save_cache(&cache);
+    }
+
+    // Build final MediaItems preserving order
+    let fetched_count = video_urls.iter().filter(|u| u.is_some()).count() - cache_hits;
+    let final_items: Vec<MediaItem> = gif_ids
+        .iter()
+        .enumerate()
+        .filter_map(|(i, gif_id)| {
+            video_urls[i].as_ref().map(|url| MediaItem {
+                url: url.clone(),
+                gif_id: Some(gif_id.to_lowercase()),
+            })
         })
         .collect();
 
-    println!("\rFetched {} videos successfully", video_urls.len());
+    println!(
+        "Ready: {} videos ({} cached, {} fetched)",
+        final_items.len(),
+        cache_hits,
+        fetched_count
+    );
 
-    Ok(video_urls)
+    Ok(final_items)
 }

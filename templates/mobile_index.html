@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="theme-color" content="#000000">
+    <link rel="manifest" href="manifest.json">
+    <title>Faptopia</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .switcher {
+            display: flex;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 9999;
+            height: 44px;
+        }
+        .switcher a {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.95rem;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+        .switcher a.active { opacity: 1; }
+        .switcher .reddit { background: #ff4500; }
+        .switcher .fourchan { background: #0f9d58; }
+        .content {
+            flex: 1;
+            margin-top: 44px;
+            height: calc(100vh - 44px);
+        }
+        .content iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .landing {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #555;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="switcher">
+        <a class="reddit" href="#" onclick="load('reddit')">Reddit</a>
+        <a class="fourchan" href="#" onclick="load('4chan')">4chan</a>
+    </div>
+    <div class="content" id="content">
+        <div class="landing">Tap Reddit or 4chan above</div>
+    </div>
+    <script>
+        function load(source) {
+            const content = document.getElementById('content');
+            const file = source === 'reddit' ? 'faptopia_reddit.html' : 'faptopia_4chan.html';
+            content.innerHTML = '<iframe src="' + file + '" allow="autoplay"></iframe>';
+            localStorage.setItem('faptopia_last', source);
+            // Highlight active tab
+            document.querySelectorAll('.switcher a').forEach(a => a.classList.remove('active'));
+            document.querySelector('.switcher .' + (source === 'reddit' ? 'reddit' : 'fourchan')).classList.add('active');
+        }
+        // Auto-load last visited
+        const last = localStorage.getItem('faptopia_last');
+        if (last) load(last);
+
+        // Register service worker for PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
+</body>
+</html>

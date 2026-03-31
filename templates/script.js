@@ -252,5 +252,166 @@ for (let i = 0; i < totalSections; i++) {
     attachVideoEndedListeners(i);
 }
 
+// ===== MOBILE SUPPORT =====
+const isMobile = window.innerWidth <= 768;
+
+// Visibility change: pause all videos when tab hidden / phone locked
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        document.querySelectorAll('video').forEach(v => {
+            v.pause();
+            v.muted = true;
+        });
+    }
+});
+
+// Source label: update with current board name
+function updateSourceLabel() {
+    const label = document.getElementById('source-label-text');
+    if (!label) return;
+    const tabs = document.querySelectorAll('.tab-button .tab-label');
+    if (tabs[currentSection]) {
+        label.textContent = tabs[currentSection].textContent;
+    }
+}
+
+// Bottom dot indicators: build dots from board count
+function buildBoardTabs() {
+    const bar = document.getElementById('board-tabs');
+    if (!bar) return;
+    bar.innerHTML = '';
+    for (let i = 0; i < totalSections; i++) {
+        const dot = document.createElement('button');
+        dot.className = 'board-tab' + (i === currentSection ? ' active' : '');
+        dot.onclick = () => {
+            showSection(i);
+            updateBoardTabs();
+            updateSourceLabel();
+        };
+        bar.appendChild(dot);
+    }
+}
+
+function updateBoardTabs() {
+    const tabs = document.querySelectorAll('.board-tab');
+    tabs.forEach((tab, i) => {
+        tab.classList.toggle('active', i === currentSection);
+    });
+}
+
+// Mobile-specific behavior
+if (isMobile) {
+    // Override showSection to also update source label and board tabs
+    const _origShowSection = showSection;
+    showSection = function(index) {
+        _origShowSection(index);
+        updateSourceLabel();
+        updateBoardTabs();
+    };
+
+    // Build bottom tab bar
+    buildBoardTabs();
+
+    // Intersection Observer: play/pause based on 60% visibility (Instagram-style)
+    const reelsObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            const video = entry.target.querySelector('video');
+            if (!video) return;
+
+            if (entry.isIntersecting) {
+                video.muted = false;
+                video.play().catch(() => {});
+                // Update current index
+                const item = entry.target;
+                const gallery = item.parentElement;
+                const sectionIndex = parseInt(gallery.id.replace('gallery-', ''));
+                const items = gallery.querySelectorAll('.gallery-item');
+                const itemIndex = Array.from(items).indexOf(item);
+                if (sectionIndex === currentSection) {
+                    currentIndices[currentSection] = itemIndex;
+                }
+                // Preload next 2 videos so they're ready when scrolled to
+                for (let n = 1; n <= 2; n++) {
+                    const next = items[itemIndex + n];
+                    if (next) {
+                        const nextVideo = next.querySelector('video');
+                        if (nextVideo && nextVideo.preload === 'none') {
+                            nextVideo.preload = 'auto';
+                        }
+                    }
+                }
+            } else {
+                video.pause();
+                video.muted = true;
+            }
+        });
+    }, { threshold: 0.6 });
+
+    // Observe all gallery items
+    document.querySelectorAll('.gallery-item').forEach(item => {
+        reelsObserver.observe(item);
+    });
+
+    // Require a deliberate vertical swipe (>30% of screen height) to scroll
+    let touchStartY_scroll = 0;
+    let scrollLocked = true;
+    document.querySelectorAll('.gallery-container').forEach(gallery => {
+        gallery.addEventListener('touchstart', e => {
+            touchStartY_scroll = e.touches[0].clientY;
+            scrollLocked = true;
+            gallery.style.overflowY = 'hidden';
+        }, { passive: true });
+        gallery.addEventListener('touchmove', e => {
+            const dy = Math.abs(e.touches[0].clientY - touchStartY_scroll);
+            if (scrollLocked && dy > window.innerHeight * 0.15) {
+                scrollLocked = false;
+                gallery.style.overflowY = 'auto';
+            }
+        }, { passive: true });
+        gallery.addEventListener('touchend', () => {
+            gallery.style.overflowY = 'auto';
+            scrollLocked = true;
+        }, { passive: true });
+    });
+
+    // Horizontal swipe on dot bar to switch boards
+    const dotBar = document.getElementById('board-tabs');
+    if (dotBar) {
+        let dotSwipeX = 0;
+        dotBar.addEventListener('touchstart', e => {
+            dotSwipeX = e.touches[0].clientX;
+        }, { passive: true });
+        dotBar.addEventListener('touchend', e => {
+            const dx = e.changedTouches[0].clientX - dotSwipeX;
+            if (Math.abs(dx) > 40) {
+                if (dx < 0) {
+                    showSection((currentSection + 1) % totalSections);
+                } else {
+                    showSection((currentSection - 1 + totalSections) % totalSections);
+                }
+                updateBoardTabs();
+            }
+        }, { passive: true });
+    }
+}
+
 // Initialize the first section on load
 showSection(0);
+if (isMobile) {
+    updateSourceLabel();
+    // Highlight active platform button based on current page
+    const currentPage = window.location.pathname.split('/').pop();
+    document.querySelectorAll('.platform-btn').forEach(btn => {
+        if (btn.getAttribute('href') === currentPage) {
+            btn.classList.add('active');
+        }
+    });
+}
+
+// Register service worker for PWA (only works over HTTPS, e.g. Cloudflare Pages)
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+} else if ('serviceWorker' in navigator) {
+    // Clean up stale workers on HTTP
+    navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
+}

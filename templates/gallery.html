@@ -2,13 +2,35 @@
 <html>
 <head>
     <title>Media Gallery</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="theme-color" content="#000000">
+    <link rel="manifest" href="manifest.json">
     <style>{{STYLES}}</style>
 </head>
 <body tabindex="0">
+    <!-- Mobile: platform switcher bar -->
+    <div class="platform-switcher" id="platform-switcher">
+        <a class="platform-btn reddit" href="faptopia_reddit.html">Reddit</a>
+        <a class="platform-btn fourchan" href="faptopia_4chan.html">4chan</a>
+    </div>
+
     <div class="tabs">
         {{TABS}}
     </div>
+
+    <!-- Mobile: subreddit label overlay -->
+    <div class="source-label" id="source-label">
+        <span class="source-label-dot"></span>
+        <span id="source-label-text"></span>
+    </div>
+
     {{SECTIONS}}
+
+    <!-- Mobile: bottom tab bar for boards -->
+    <div class="board-tabs" id="board-tabs"></div>
+
     <div class="nav-hint" id="nav-hint">Press C to switch boards · Press Z ← → X to navigate · Press P to toggle auto-scroll</div>
     <div class="autoscroll-alert" id="autoscroll-alert"></div>
     <script>{{SCRIPT}}</script>
