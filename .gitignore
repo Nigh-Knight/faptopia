@@ -38,3 +38,6 @@ package-lock.json
 
 # Faptopia launcher (local only)
 faptopia_launcher.html
+
+# Faptopia URL cache (regenerated on demand, 4h TTL)
+.faptopia_cache.json

@@ -6,47 +6,23 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use ureq;
 
 struct MediaItem {
     url: String,
+    sd_url: Option<String>,
     gif_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MediaEmbed {
-    content: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PostData {
-    media_embed: Option<MediaEmbed>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Child {
-    data: PostData,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Listing {
-    children: Vec<Child>,
-    after: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RedditResponse {
-    data: Listing,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Post {
+    no: Option<u64>,
+    sub: Option<String>,
     ext: Option<String>,
     tim: Option<u64>,
 }
@@ -70,18 +46,26 @@ struct RedGifsGifUrls {
 
 #[derive(Deserialize)]
 struct RedGifsGif {
+    id: Option<String>,
     urls: RedGifsGifUrls,
 }
 
 #[derive(Deserialize)]
-struct RedGifsGifResponse {
-    gif: RedGifsGif,
+struct RedGifsGifsResponse {
+    gifs: Vec<RedGifsGif>,
+}
+
+#[derive(Deserialize)]
+struct RedGifsSingleGifResponse {
+    gif: Option<RedGifsGif>,
 }
 
 // Cache structures for storing resolved RedGifs URLs
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct CacheEntry {
     url: String,
+    #[serde(default)]
+    sd_url: Option<String>,
     fetched_at: u64,
 }
 
@@ -113,13 +97,40 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-// extracts the redgif ID from iframe URLs
-static REDGIFS_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"https://www\.redgifs\.com/ifr/([a-zA-Z0-9_-]+)").unwrap());
+// extracts a RedGifs slug from a Reddit Atom entry. The link is HTML-encoded
+// inside the entry body, e.g. &quot;https://www.redgifs.com/watch/tepididealxenopus&quot;
+static REDGIFS_LINK_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"redgifs\.com/(?:watch|ifr)/([a-zA-Z0-9_-]+)").unwrap());
+
+// extracts the last post id of an Atom page, reused as the ?after= cursor
+static ENTRY_ID_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<id>t3_([a-z0-9]+)</id>").unwrap());
+
+// Anonymous reddit allows roughly one request per minute, so remember when the
+// last request went out and space every subsequent one instead of eating 429s.
+static LAST_REDDIT_REQUEST: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
+const REDDIT_MIN_INTERVAL: Duration = Duration::from_secs(62);
+
+fn reddit_rate_gate() {
+    let mut last = LAST_REDDIT_REQUEST.lock().unwrap();
+    if let Some(prev) = *last {
+        let elapsed = prev.elapsed();
+        if elapsed < REDDIT_MIN_INTERVAL {
+            thread::sleep(REDDIT_MIN_INTERVAL - elapsed);
+        }
+    }
+    *last = Some(Instant::now());
+}
 
 // parses Reddit URLs to extract subreddit, modifier, and time parameters
 static REDDIT_URL_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^https?://(?:www\.)?reddit\.com/r/([^/]+)/([^/?]+)(?:/?\?t=([^&]+))?").unwrap()
+});
+
+// parses Reddit user profile URLs to extract username
+// sort and t params are extracted manually from the query string
+static REDDIT_USER_URL_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^https?://(?:www\.)?reddit\.com/user/([^/?]+)").unwrap()
 });
 
 #[derive(Parser)]
@@ -128,8 +139,10 @@ static REDDIT_URL_REGEX: Lazy<Regex> = Lazy::new(|| {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
-    #[arg(long, global = true, help = "Shuffle videos in a random order")]
+    #[arg(long, global = true, help = "Shuffle videos AND boards/threads in a random order")]
     random: bool,
+    #[arg(long, global = true, help = "Reverse video AND board/thread order (start from last)")]
+    reverse: bool,
     #[arg(long, global = true, help = "Start local server for mobile access")]
     serve: bool,
     #[arg(long, global = true, default_value_t = 6969, help = "Port for local server")]
@@ -143,6 +156,10 @@ enum Commands {
     Reddit(SubReddit),
     #[clap(name = "4chan")]
     FourChan(ThreadId),
+    #[clap(about = "Deploy existing gallery files to Cloudflare Pages")]
+    Deploy,
+    #[clap(about = "Generate usage stats page (faptopia_stats.html)")]
+    Stats,
 }
 
 #[derive(Args)]
@@ -157,80 +174,126 @@ struct SubReddit {
     limit: usize,
 }
 
-enum RedditInput {
-    FormatString {
-        subreddit: String,
+#[derive(Clone)]
+enum RedditSource {
+    Subreddit {
+        name: String,
         modifier: String,
         time: String,
     },
-    Url {
-        subreddit: String,
+    User {
+        name: String,
         modifier: String,
         time: String,
     },
 }
 
-fn parse_reddit_input(input: &str) -> Result<RedditInput, String> {
-    if input.starts_with("http://") || input.starts_with("https://") {
-        if let Some(caps) = REDDIT_URL_REGEX.captures(input) {
-            let subreddit = caps
-                .get(1)
-                .ok_or("Missing subreddit in URL")?
-                .as_str()
-                .to_string();
-            let modifier = caps
-                .get(2)
-                .ok_or("Missing modifier in URL")?
-                .as_str()
-                .to_string();
-            let time = caps
-                .get(3)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "all".to_string());
+/// Extract a query parameter from a URL query string
+fn extract_query_param(query: &str, name: &str) -> Option<String> {
+    for pair in query.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        if parts.next()? == name {
+            return parts.next().map(|v| v.to_string());
+        }
+    }
+    None
+}
 
-            return Ok(RedditInput::Url {
-                subreddit,
-                modifier,
+/// Returns the display label for a Reddit source (e.g. "r/hotwife" or "u/theworldwidebull")
+fn source_label(source: &RedditSource) -> String {
+    match source {
+        RedditSource::Subreddit { name, .. } => format!("r/{}", name),
+        RedditSource::User { name, .. } => format!("u/{}", name),
+    }
+}
+
+fn parse_reddit_input(input: &str) -> Result<RedditSource, String> {
+    if input.starts_with("http://") || input.starts_with("https://") {
+        // Try subreddit URL first
+        if let Some(caps) = REDDIT_URL_REGEX.captures(input) {
+            return Ok(RedditSource::Subreddit {
+                name: caps.get(1).ok_or("Missing subreddit in URL")?.as_str().to_string(),
+                modifier: caps.get(2).ok_or("Missing modifier in URL")?.as_str().to_string(),
+                time: caps
+                    .get(3)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_else(|| "all".to_string()),
+            });
+        }
+        // Try user profile URL
+        if let Some(caps) = REDDIT_USER_URL_REGEX.captures(input) {
+            let username = caps.get(1).ok_or("Missing username in URL")?.as_str().to_string();
+            // Parse query params manually for flexibility
+            let query_part = input.split('?').nth(1).unwrap_or("");
+            let sort = extract_query_param(query_part, "sort").unwrap_or_else(|| "hot".to_string());
+            let time = extract_query_param(query_part, "t").unwrap_or_else(|| "all".to_string());
+            return Ok(RedditSource::User {
+                name: username,
+                modifier: sort,
                 time,
             });
-        } else {
-            return Err(
-                "Invalid Reddit URL format. Expected: https://reddit.com/r/SUBREDDIT/MODIFIER/?t=TIME"
-                    .to_string(),
-            );
         }
+        return Err(
+            "Invalid Reddit URL. Expected: https://reddit.com/r/SUBREDDIT/MODIFIER/?t=TIME or https://reddit.com/user/NAME/?sort=X&t=Y"
+                .to_string(),
+        );
     }
 
     let parts: Vec<&str> = input.split(':').collect();
     if parts.len() == 3 {
-        Ok(RedditInput::FormatString {
-            subreddit: parts[0].to_string(),
-            modifier: parts[1].to_string(),
-            time: parts[2].to_string(),
-        })
+        if parts[0].starts_with("u/") {
+            Ok(RedditSource::User {
+                name: parts[0].trim_start_matches("u/").to_string(),
+                modifier: parts[1].to_string(),
+                time: parts[2].to_string(),
+            })
+        } else {
+            // Bare name or r/name — both default to subreddit
+            let name = parts[0].trim_start_matches("r/");
+            Ok(RedditSource::Subreddit {
+                name: name.to_string(),
+                modifier: parts[1].to_string(),
+                time: parts[2].to_string(),
+            })
+        }
     } else {
-        Err("Invalid format. Use 'subreddit:modifier:time' or a full Reddit URL".to_string())
+        Err(
+            "Invalid format. Use 'subreddit:modifier:time', 'u/username:sort:time', or a full Reddit URL"
+                .to_string(),
+        )
     }
 }
 
 fn main() -> io::Result<()> {
     let cli: Cli = Cli::parse();
 
-    // functionality for 4chan | allows you to do this: faptopia 4chan [thread id]
     let random = cli.random;
+    let reverse = cli.reverse;
     match &cli.command {
         Commands::FourChan(args) => {
             if let Some(ids) = &args.thread {
+                // Randomize/reverse thread order so tabs come out shuffled too
+                let mut ids = ids.clone();
+                if random { ids.shuffle(&mut thread_rng()); }
+                if reverse { ids.reverse(); }
+
+                // Fetch all threads in parallel
+                let handles: Vec<_> = ids
+                    .iter()
+                    .map(|&id| thread::spawn(move || fetch_video_links_4chan(&[id]).map_err(|e| e.to_string())))
+                    .collect();
+
                 let mut thread_items = Vec::new();
-                for id in ids {
-                    match fetch_video_links_4chan(&[*id]) {
-                        Ok(links) => {
-                            let mut items: Vec<MediaItem> =
-                                links.into_iter().map(|url| MediaItem { url, gif_id: None }).collect();
-                            if random {
-                                items.shuffle(&mut thread_rng());
+                for (id, handle) in ids.iter().zip(handles) {
+                    match handle.join().expect("thread panicked") {
+                        Ok(threads) => {
+                            for (title, links) in threads {
+                                let mut items: Vec<MediaItem> =
+                                    links.into_iter().map(|url| MediaItem { url, sd_url: None, gif_id: None }).collect();
+                                if random { items.shuffle(&mut thread_rng()); }
+                                if reverse { items.reverse(); }
+                                thread_items.push((title, items));
                             }
-                            thread_items.push((format!("Thread {}", id), items));
                         }
                         Err(e) => eprintln!("Error fetching thread {}: {}", id, e),
                     }
@@ -240,43 +303,92 @@ fn main() -> io::Result<()> {
                 println!("INPUT A THREAD ID");
             }
         }
-        // functionality for reddit | allows you to do this: faptopia reddit [subreddit:modifier:time]
         Commands::Reddit(args) => {
             if let Some(names) = &args.name {
-                let mut subreddit_items = Vec::new();
-                for x in names {
-                    match parse_reddit_input(x) {
-                        Ok(input) => {
-                            let (subreddit, modifier, time) = match input {
-                                RedditInput::FormatString {
-                                    subreddit,
-                                    modifier,
-                                    time,
-                                }
-                                | RedditInput::Url {
-                                    subreddit,
-                                    modifier,
-                                    time,
-                                } => (subreddit, modifier, time),
-                            };
+                // Parse all inputs into RedditSource (subreddit or user)
+                let mut parsed: Vec<RedditSource> = names
+                    .iter()
+                    .filter_map(|x| match parse_reddit_input(x) {
+                        Ok(source) => Some(source),
+                        Err(e) => { eprintln!("Invalid input '{}': {}", x, e); None }
+                    })
+                    .collect();
 
-                            match fetch_media_embeds_reddit(&subreddit, &modifier, &time, args.limit) {
-                                Ok(mut items) => {
-                                    if random {
-                                        items.shuffle(&mut thread_rng());
-                                    }
-                                    subreddit_items.push((format!("r/{}", subreddit), items));
-                                }
-                                Err(e) => eprintln!("Error fetching r/{}: {}", subreddit, e),
+                // Randomize/reverse board order so tabs come out shuffled too
+                if random { parsed.shuffle(&mut thread_rng()); }
+                if reverse { parsed.reverse(); }
+
+                // Load cache and fetch token once; each thread gets clones
+                let cache = load_cache();
+                let limit = args.limit;
+                let token = match fetch_redgifs_token() {
+                    Ok(t) => t,
+                    Err(e) => { eprintln!("Failed to fetch RedGifs token: {}", e); return Ok(()); }
+                };
+
+                // Fetch boards one at a time: anonymous reddit only allows
+                // ~1 request/minute, so parallelism just trades 429s.
+                // Tab order is preserved.
+                let mut subreddit_items = Vec::new();
+                let mut all_new_entries: HashMap<String, CacheEntry> = HashMap::new();
+                let concurrency = 1;
+
+                if parsed.len() > 1 {
+                    println!(
+                        "Fetching {} boards - reddit allows ~1 request/minute, so this takes ~{} minutes",
+                        parsed.len(),
+                        parsed.len()
+                    );
+                }
+
+                for chunk in parsed.chunks(concurrency) {
+                    let handles: Vec<_> = chunk
+                        .iter()
+                        .map(|source| {
+                            let snapshot = cache.redgifs.clone();
+                            let tok = token.clone();
+                            let source_clone = source.clone();
+                            thread::spawn(move || {
+                                let label = source_label(&source_clone);
+                                fetch_media_embeds_reddit(&source_clone, limit, snapshot, tok)
+                                    .map(|(items, new_entries)| (label, items, new_entries))
+                            })
+                        })
+                        .collect();
+
+                    for (_source, handle) in chunk.iter().zip(handles) {
+                        match handle.join().expect("thread panicked") {
+                            Ok((name, mut items, new_entries)) => {
+                                if random { items.shuffle(&mut thread_rng()); }
+                                if reverse { items.reverse(); }
+                                subreddit_items.push((name, items));
+                                all_new_entries.extend(new_entries);
                             }
+                            Err(e) => eprintln!("Error fetching {}: {}", source_label(_source), e),
                         }
-                        Err(e) => eprintln!("Invalid input '{}': {}", x, e),
+                    }
+
+                    // Small gap between batches to keep the request rate low
+                    if chunk.len() == concurrency {
+                        thread::sleep(Duration::from_millis(250));
                     }
                 }
+
+                // Merge new entries back into cache and save once
+                let mut final_cache = UrlCache { redgifs: cache.redgifs };
+                final_cache.redgifs.extend(all_new_entries);
+                save_cache(&final_cache);
+
                 save_gallery(subreddit_items, "faptopia_reddit.html")?;
             } else {
                 println!("INPUT A SUBREDDIT PAGE");
             }
+        }
+        Commands::Deploy => {
+            deploy_to_cloudflare()?;
+        }
+        Commands::Stats => {
+            generate_stats_page()?;
         }
     }
 
@@ -349,6 +461,12 @@ fn deploy_to_cloudflare() -> io::Result<()> {
         include_str!("../templates/_worker.js"),
     )?;
 
+    // Stats page (reads localStorage from same origin)
+    fs::write(
+        format!("{}/faptopia_stats.html", deploy_dir),
+        include_str!("../templates/stats.html"),
+    )?;
+
     println!("Deploying to Cloudflare Pages...");
 
     let status = Command::new("wrangler")
@@ -359,6 +477,7 @@ fn deploy_to_cloudflare() -> io::Result<()> {
 
     if status.success() {
         println!("Deployed! Visit https://faptopia.pages.dev");
+        println!("Stats: https://faptopia.pages.dev/faptopia_stats.html");
         println!("Add to Home Screen on your phone for full PWA experience.");
     } else {
         eprintln!("Deploy failed. Run 'wrangler login' to authenticate.");
@@ -413,6 +532,12 @@ fn serve_gallery(port: u16) -> io::Result<()> {
         include_str!("../templates/icon.svg"),
     )?;
 
+    // Stats page (reads localStorage from same origin)
+    fs::write(
+        format!("{}/faptopia_stats.html", serve_dir),
+        include_str!("../templates/stats.html"),
+    )?;
+
     // Write the proxy server script
     let server_script = format!("{}/server.py", serve_dir);
     fs::write(&server_script, include_str!("../templates/server.py"))?;
@@ -421,6 +546,7 @@ fn serve_gallery(port: u16) -> io::Result<()> {
     println!("Serving gallery at:");
     println!("  Local:   http://localhost:{}", port);
     println!("  Mobile:  http://{}:{}", ip, port);
+    println!("  Stats:   http://localhost:{}/faptopia_stats.html", port);
     println!();
     println!("Open the Mobile URL on your phone and tap 'Add to Home Screen' for PWA.");
     println!("Press Ctrl+C to stop.");
@@ -443,6 +569,17 @@ fn serve_gallery(port: u16) -> io::Result<()> {
 const HTML_TEMPLATE: &str = include_str!("../templates/gallery.html");
 const CSS_TEMPLATE: &str = include_str!("../templates/styles.css");
 const JS_TEMPLATE: &str = include_str!("../templates/script.js");
+const EMBLA_TEMPLATE: &str = include_str!("../templates/embla.js");
+const STATS_TEMPLATE: &str = include_str!("../templates/stats.html");
+
+fn generate_stats_page() -> io::Result<()> {
+    let filename = "faptopia_stats.html";
+    fs::write(filename, STATS_TEMPLATE)?;
+    println!("Stats page saved to {}", filename);
+    println!("Open it in the same browser you use the galleries.");
+    println!("Tip: use --serve so all pages share the same origin.");
+    Ok(())
+}
 
 // rewrites gallery HTML for proxy/deploy: RedGifs videos use on-demand resolution,
 // 4chan videos use simple proxy
@@ -465,10 +602,10 @@ fn rewrite_html_for_proxy(html: &str) -> String {
 // create a horizontal scrollable gallery
 fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> String {
     // Determine toggle button based on current file
-    let (toggle_text, toggle_file, toggle_color) = if filename.contains("reddit") {
-        ("4chan", "faptopia_4chan.html", "#0f9d58") // Green for 4chan
+    let (toggle_text, toggle_file, toggle_class) = if filename.contains("reddit") {
+        ("4CHAN", "faptopia_4chan.html", "gallery-toggle--4chan") // Green for 4chan
     } else {
-        ("reddit", "faptopia_reddit.html", "#ff4500") // Reddit orange/red
+        ("REDDIT", "faptopia_reddit.html", "gallery-toggle--reddit") // Reddit orange/red
     };
 
     // Generate tabs and content sections
@@ -485,11 +622,24 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
                         Some(id) => format!(r#" data-gif-id="{}""#, id),
                         None => String::new(),
                     };
+                    // SD fallback URL (only when it differs from the primary)
+                    let sd_url_attr = match &item.sd_url {
+                        Some(sd) if *sd != item.url => format!(r#" data-sd-url="{}""#, sd),
+                        _ => String::new(),
+                    };
                     let mime_type = if item.url.ends_with(".webm") {
                         "video/webm"
                     } else {
                         "video/mp4"
                     };
+                    // Only the very first video of the first board autoplays and preloads.
+                    // All others start as preload="none" — JS promotes them when the user
+                    // is about to need them, avoiding ~1100 simultaneous network requests on load.
+                    // Only the very first video's metadata is preloaded for instant
+                    // player chrome. All others start with preload="none" so the browser
+                    // doesn't start any network requests until the user navigates to them.
+                    // This prevents saturating the single HTTP/2 connection to the CDN.
+                    let is_first = section_index == 0 && index == 0;
                     format!(
                         r#"<div class="gallery-item" data-index="{global_index}">
                             <video
@@ -497,16 +647,16 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
                                 {autoplay}
                                 {muted}
                                 playsinline
-                                data-index="{global_index}"{gif_id_attr}
+                                data-index="{global_index}"{gif_id_attr}{sd_url_attr}
                                 preload="{preload}"
                             >
                                 <source src="{url}" type="{mime_type}">
                             </video>
                         </div>"#,
                         url = item.url,
-                        autoplay = if index == 0 { "autoplay" } else { "" },
-                        muted = if index == 0 { "muted" } else { "" },
-                        preload = if index == 0 { "auto" } else { "none" }
+                        autoplay = if is_first { "autoplay" } else { "" },
+                        muted = if is_first { "muted" } else { "" },
+                        preload = if is_first { "metadata" } else { "none" }
                     )
                 })
                 .collect();
@@ -524,8 +674,10 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
 
             let section = format!(
                 r#"<div class="gallery-section{}" data-section="{}">
-                    <div class="gallery-container" id="gallery-{}">
+                    <div class="gallery-em" id="gallery-{}">
+                        <div class="gallery-em__track">
                         {}
+                        </div>
                     </div>
                 </div>"#,
                 if section_index == 0 {
@@ -543,12 +695,18 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
         .unzip();
 
     // Inject the generated content into templates
-    let script = JS_TEMPLATE.replace("{{TOTAL_SECTIONS}}", &items.len().to_string());
+    let platform = if filename.contains("reddit") { "reddit" } else { "4chan" };
+    let script = format!(
+        "{}\n{}",
+        EMBLA_TEMPLATE,
+        JS_TEMPLATE
+            .replace("{{TOTAL_SECTIONS}}", &items.len().to_string())
+            .replace("{{PLATFORM}}", platform)
+    );
 
-    // Add toggle button to switch between reddit/4chan galleries
     let toggle_button = format!(
-        r#"<a href="{}" class="gallery-toggle" style="background: {}; margin-left: auto;">{}</a>"#,
-        toggle_file, toggle_color, toggle_text
+        r#"<a href="{}" class="gallery-toggle {} ">{}</a>"#,
+        toggle_file, toggle_class, toggle_text
     );
     let tabs_with_toggle = format!("{}\n{}", tabs.join("\n"), toggle_button);
 
@@ -560,14 +718,18 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
 }
 
 // gets the 4chan video links from the gif board
-pub fn fetch_video_links_4chan(thread_ids: &[u64]) -> Result<Vec<String>, ureq::Error> {
-    let mut all_links = Vec::new();
+pub fn fetch_video_links_4chan(thread_ids: &[u64]) -> Result<Vec<(String, Vec<String>)>, ureq::Error> {
+    let mut results = Vec::new();
     for id in thread_ids {
         let url = format!("https://a.4cdn.org/gif/thread/{}.json", id);
         let response = ureq::get(&url).call()?;
         let thread: Thread = response.into_json()?;
 
-        let thread_links: Vec<String> = thread
+        let title = thread.posts.first()
+            .and_then(|op| op.sub.clone())
+            .unwrap_or_else(|| format!("Thread {}", id));
+
+        let links: Vec<String> = thread
             .posts
             .into_iter()
             .filter_map(|post| match (post.ext.as_ref(), post.tim) {
@@ -578,9 +740,9 @@ pub fn fetch_video_links_4chan(thread_ids: &[u64]) -> Result<Vec<String>, ureq::
             })
             .collect();
 
-        all_links.extend(thread_links);
+        results.push((title, links));
     }
-    Ok(all_links)
+    Ok(results)
 }
 
 // fetches a temporary auth token from RedGifs API
@@ -592,98 +754,205 @@ fn fetch_redgifs_token() -> Result<String, ureq::Error> {
     Ok(auth.token)
 }
 
-// fetches the direct video URL for a RedGifs gif ID
-fn fetch_redgifs_video_url(gif_id: &str, token: &str) -> Result<String, ureq::Error> {
-    let url = format!("https://api.redgifs.com/v2/gifs/{}", gif_id.to_lowercase());
-    let response = ureq::get(&url)
-        .set("User-Agent", "rust:faptopia:v1.0")
-        .set("Authorization", &format!("Bearer {}", token))
-        .call()?;
-    let gif_response: RedGifsGifResponse = response.into_json()?;
-    Ok(gif_response.gif.urls.hd.unwrap_or(gif_response.gif.urls.sd))
+// RedGifs deprecated the batch query endpoint (?ids= — returns 404).
+// The multi-ID path form requires a user token (PATCH), unavailable to
+// temporary tokens. Fall back to fetching each gif individually.
+// Returns (hd, sd) URL pairs so galleries can fall back to SD when HD fails.
+fn fetch_redgifs_batch(gif_ids: &[String], token: &str) -> Result<HashMap<String, (String, String)>, ureq::Error> {
+    let mut result = HashMap::new();
+    for gif_id in gif_ids {
+        let id_lower = gif_id.to_lowercase();
+        let url = format!("https://api.redgifs.com/v2/gifs/{}", id_lower);
+        if let Ok(response) = ureq::get(&url)
+            .set("User-Agent", "rust:faptopia:v1.0")
+            .set("Authorization", &format!("Bearer {}", token))
+            .call()
+        {
+            if let Ok(gif_data) = response.into_json::<RedGifsSingleGifResponse>() {
+                if let Some(gif) = gif_data.gif {
+                    let canonical_id = gif.id.unwrap_or_else(|| id_lower.clone()).to_lowercase();
+                    let RedGifsGifUrls { hd, sd } = gif.urls;
+                    let hd = hd.unwrap_or_else(|| sd.clone());
+                    result.insert(canonical_id, (hd, sd));
+                }
+            }
+        }
+    }
+    Ok(result)
 }
 
-// gets the videos from reddit via RedGifs API (with caching and parallel fetching)
-fn fetch_media_embeds_reddit(
-    subreddit: &str,
-    modifier: &str,
-    time: &str,
+// Fetches RedGifs IDs from a subreddit/user Atom feed.
+//
+// Reddit has walled off its anonymous JSON API (403 "blocked by network
+// security") and old.reddit.com now 302s logged-out clients to a login page,
+// but the public /r/<sub>/<sort>/.rss feed still works and carries the redgifs
+// link inside each entry's HTML body. The feed honours limit=100 and
+// ?after=<last post id> for pagination; anonymous requests are capped at about
+// one per minute, which reddit_rate_gate() enforces for us.
+fn fetch_redgifs_ids_from_rss(
+    source: &RedditSource,
     limit: usize,
-) -> Result<Vec<MediaItem>, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, String> {
     let mut gif_ids: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut after: Option<String> = None;
+    let mut pages = 0;
 
-    // Paginate until we have enough gif IDs or run out of posts.
-    // Always request 100 per page (Reddit's max) since many posts won't be RedGifs embeds.
-    while gif_ids.len() < limit {
-        let per_page = 100;
-        let url = match &after {
-            Some(cursor) => format!(
-                "https://www.reddit.com/r/{}/{}/.json?t={}&limit={}&after={}",
-                subreddit, modifier, time, per_page, cursor
+    let ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+    let per_page = limit.clamp(25, 100);
+
+    // Cap the page count so a board whose posts never link RedGifs can't walk
+    // the whole feed one minute at a time.
+    while gif_ids.len() < limit && pages < 6 {
+        pages += 1;
+        let url = match (source, &after) {
+            (RedditSource::Subreddit { name, modifier, time }, Some(cursor)) => format!(
+                "https://www.reddit.com/r/{}/{}/.rss?t={}&limit={}&after=t3_{}",
+                name, modifier, time, per_page, cursor
             ),
-            None => format!(
-                "https://www.reddit.com/r/{}/{}/.json?t={}&limit={}",
-                subreddit, modifier, time, per_page
+            (RedditSource::Subreddit { name, modifier, time }, None) => format!(
+                "https://www.reddit.com/r/{}/{}/.rss?t={}&limit={}",
+                name, modifier, time, per_page
+            ),
+            (RedditSource::User { name, modifier, time }, Some(cursor)) => format!(
+                "https://www.reddit.com/user/{}/.rss?sort={}&t={}&limit={}&after=t3_{}",
+                name, modifier, time, per_page, cursor
+            ),
+            (RedditSource::User { name, modifier, time }, None) => format!(
+                "https://www.reddit.com/user/{}/.rss?sort={}&t={}&limit={}",
+                name, modifier, time, per_page
             ),
         };
 
-        let response = ureq::get(&url)
-            .set("User-Agent", "rust:faptopia:v1.0")
-            .call()?;
-        let reddit_response: RedditResponse = response.into_json()?;
+        // Retry rate limits / transient blocks with the server's own backoff hint
+        let mut attempt: u32 = 0;
+        let body = loop {
+            attempt += 1;
+            reddit_rate_gate();
+            match ureq::get(&url)
+                .set("User-Agent", ua)
+                .set("Cookie", "over18=1")
+                .set("Accept", "application/atom+xml,application/xml;q=0.9,*/*;q=0.8")
+                .set("Accept-Language", "en-US,en;q=0.9")
+                .call()
+            {
+                Ok(resp) => break resp.into_string().map_err(|e| e.to_string())?,
+                Err(ureq::Error::Status(code, resp))
+                    if (code == 429 || code == 403 || code == 503) && attempt < 5 =>
+                {
+                    let wait = resp
+                        .header("x-ratelimit-reset")
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(60);
+                    eprintln!(
+                        "Rate-limited by reddit ({}) - retrying in {}s (attempt {}/5)",
+                        code,
+                        wait + 1,
+                        attempt
+                    );
+                    thread::sleep(Duration::from_secs(wait + 1 + rand::random::<u64>() % 3));
+                }
+                Err(ureq::Error::Status(code, _)) => {
+                    return Err(format!("reddit feed returned status {}", code))
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        };
 
-        let next_cursor = reddit_response.data.after.clone();
-        let children = reddit_response.data.children;
-        let total_posts = children.len();
+        for cap in REDGIFS_LINK_REGEX.captures_iter(&body) {
+            if let Some(id) = cap.get(1) {
+                let id = id.as_str().to_lowercase();
+                if seen.insert(id.clone()) {
+                    gif_ids.push(id);
+                }
+            }
+        }
 
-        let page_ids: Vec<String> = children
-            .into_iter()
-            .filter_map(|child| {
-                child
-                    .data
-                    .media_embed
-                    .and_then(|embed| embed.content)
-                    .and_then(|html| {
-                        REDGIFS_REGEX
-                            .captures(&html)
-                            .and_then(|caps| caps.get(1))
-                            .map(|m| m.as_str().to_string())
-                    })
-            })
-            .collect();
-
-        gif_ids.extend(page_ids);
-
-        // Stop if Reddit has no more pages or returned no posts at all
-        match next_cursor {
-            Some(cursor) if total_posts > 0 => after = Some(cursor),
-            _ => break,
+        // Cursor for the next page is the last post id on this one
+        match ENTRY_ID_REGEX.captures_iter(&body).last() {
+            Some(cap) => after = Some(cap.get(1).unwrap().as_str().to_string()),
+            None => break,
         }
     }
 
     gif_ids.truncate(limit);
+    Ok(gif_ids)
+}
 
-    // Deduplicate gif IDs while preserving order
-    let mut seen = HashSet::new();
-    gif_ids.retain(|id| seen.insert(id.to_lowercase()));
-
-    if gif_ids.is_empty() {
-        return Ok(vec![]);
+// Resolves numeric RedGifs IDs to canonical slugs via the single-GIF API.
+// Slug IDs are returned as-is. This fixes the batch API coalescing issue
+// where numeric IDs map to canonical slugs but the lookup fails.
+fn resolve_gif_ids_to_canonical(
+    gif_ids: Vec<String>,
+    token: &str,
+) -> Vec<String> {
+    let mut resolved = Vec::with_capacity(gif_ids.len());
+    for id in gif_ids {
+        if id.chars().all(|c| c.is_ascii_digit()) {
+            let url = format!("https://api.redgifs.com/v2/gifs/{}", id.to_lowercase());
+            match ureq::get(&url)
+                .set("User-Agent", "rust:faptopia:v1.0")
+                .set("Authorization", &format!("Bearer {}", token))
+                .call()
+            {
+                Ok(response) => {
+                    if let Ok(gif_data) = response.into_json::<RedGifsSingleGifResponse>() {
+                        if let Some(gif) = gif_data.gif {
+                            if let Some(gif_id) = gif.id {
+                                resolved.push(gif_id.to_lowercase());
+                                continue;
+                            }
+                        }
+                    }
+                    resolved.push(id.to_lowercase());
+                }
+                Err(_) => resolved.push(id.to_lowercase()),
+            }
+        } else {
+            resolved.push(id.to_lowercase());
+        }
     }
 
-    // Load cache and split into cached vs uncached
-    let mut cache = load_cache();
+    // Deduplicate while preserving order
+    let mut seen = HashSet::new();
+    resolved.retain(|id| seen.insert(id.clone()));
+
+    resolved
+}
+
+// gets the videos for a reddit source via the Atom feed + RedGifs API (with caching)
+// Takes an owned snapshot of the cache map so it can be called from a thread.
+// Returns the fetched items and any new cache entries (caller merges and saves).
+fn fetch_media_embeds_reddit(
+    source: &RedditSource,
+    limit: usize,
+    cache_snapshot: HashMap<String, CacheEntry>,
+    token: String,
+) -> Result<(Vec<MediaItem>, HashMap<String, CacheEntry>), String> {
+    let label = source_label(source);
+    let gif_ids = fetch_redgifs_ids_from_rss(source, limit)?;
+    let gif_ids = resolve_gif_ids_to_canonical(gif_ids, &token);
+
+    if gif_ids.is_empty() {
+        return Ok((vec![], HashMap::new()));
+    }
+
+    // Split into cached vs uncached using the provided snapshot
     let now = now_secs();
-    let mut video_urls: Vec<Option<String>> = vec![None; gif_ids.len()];
+    let mut video_urls: Vec<Option<(String, String)>> = vec![None; gif_ids.len()];
     let mut uncached: Vec<(usize, String)> = Vec::new();
     let mut cache_hits = 0;
 
     for (i, gif_id) in gif_ids.iter().enumerate() {
         let id_lower = gif_id.to_lowercase();
-        if let Some(entry) = cache.redgifs.get(&id_lower) {
+        if let Some(entry) = cache_snapshot.get(&id_lower) {
             if now - entry.fetched_at < CACHE_TTL_SECS {
-                video_urls[i] = Some(entry.url.clone());
+                // Older cache entries have no SD URL; fall back to the HD URL
+                // (no downgrade possible, but still a valid pair)
+                video_urls[i] = Some((
+                    entry.url.clone(),
+                    entry.sd_url.clone().unwrap_or_else(|| entry.url.clone()),
+                ));
                 cache_hits += 1;
                 continue;
             }
@@ -692,88 +961,69 @@ fn fetch_media_embeds_reddit(
     }
 
     if cache_hits > 0 {
-        println!("{} videos loaded from cache", cache_hits);
+        println!("[{}] {} cached", label, cache_hits);
     }
 
-    // Fetch uncached URLs in parallel (8 concurrent requests)
+    // Fetch uncached URLs via batch API (up to 100 IDs per request)
+    let mut new_entries: HashMap<String, CacheEntry> = HashMap::new();
+
     if !uncached.is_empty() {
-        let token = fetch_redgifs_token()?;
         let total_to_fetch = uncached.len();
-        let progress = Arc::new(AtomicUsize::new(0));
+        let mut fetched_results: Vec<(usize, String, String, String)> = Vec::new();
+        let mut done = 0;
 
-        let batch_size = 8;
-        let mut fetched_results: Vec<(usize, String, String)> = Vec::new();
-
-        for chunk in uncached.chunks(batch_size) {
-            let handles: Vec<_> = chunk
-                .iter()
-                .map(|(idx, gif_id)| {
-                    let idx = *idx;
-                    let gif_id = gif_id.clone();
-                    let token = token.clone();
-                    let progress = Arc::clone(&progress);
-                    let total = total_to_fetch;
-                    let sub = subreddit.to_string();
-
-                    thread::spawn(move || {
-                        let result = fetch_redgifs_video_url(&gif_id, &token).ok();
-                        let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
-                        let pct = (done as f32 / total as f32 * 100.0) as u8;
-                        print!(
-                            "\rFetching videos: {}% ({}/{}) from r/{}",
-                            pct, done, total, sub
-                        );
-                        io::stdout().flush().ok();
-                        result.map(|url| (idx, gif_id, url))
-                    })
-                })
-                .collect();
-
-            for h in handles {
-                if let Ok(Some((idx, gif_id, url))) = h.join() {
-                    fetched_results.push((idx, gif_id, url));
+        for chunk in uncached.chunks(100) {
+            let ids: Vec<String> = chunk.iter().map(|(_, id)| id.clone()).collect();
+            match fetch_redgifs_batch(&ids, &token) {
+                Ok(url_map) => {
+                    done += ids.len();
+                    let pct = (done as f32 / total_to_fetch as f32 * 100.0) as u8;
+                    println!("[{}] fetching {}% ({}/{})", label, pct, done, total_to_fetch);
+                    for (idx, gif_id) in chunk {
+                        if let Some((hd, sd)) = url_map.get(&gif_id.to_lowercase()) {
+                            fetched_results.push((*idx, gif_id.clone(), hd.clone(), sd.clone()));
+                        }
+                    }
                 }
+                Err(e) => eprintln!("[{}] batch fetch failed: {}", label, e),
             }
         }
 
-        if total_to_fetch > 0 {
-            println!();
-        }
-
-        // Update results and cache with fetched URLs
-        for (idx, gif_id, url) in &fetched_results {
-            video_urls[*idx] = Some(url.clone());
-            cache.redgifs.insert(
+        for (idx, gif_id, hd, sd) in &fetched_results {
+            video_urls[*idx] = Some((hd.clone(), sd.clone()));
+            new_entries.insert(
                 gif_id.to_lowercase(),
                 CacheEntry {
-                    url: url.clone(),
+                    url: hd.clone(),
+                    sd_url: Some(sd.clone()),
                     fetched_at: now,
                 },
             );
         }
-
-        save_cache(&cache);
     }
 
     // Build final MediaItems preserving order
-    let fetched_count = video_urls.iter().filter(|u| u.is_some()).count() - cache_hits;
+    let fetched_count = new_entries.len();
     let final_items: Vec<MediaItem> = gif_ids
         .iter()
         .enumerate()
         .filter_map(|(i, gif_id)| {
-            video_urls[i].as_ref().map(|url| MediaItem {
+            video_urls[i].as_ref().map(|(url, sd_url)| MediaItem {
                 url: url.clone(),
+                // Only carry an SD URL when it actually differs (avoids useless fallbacks)
+                sd_url: (sd_url != url).then(|| sd_url.clone()),
                 gif_id: Some(gif_id.to_lowercase()),
             })
         })
         .collect();
 
     println!(
-        "Ready: {} videos ({} cached, {} fetched)",
+        "[{}] done: {} videos ({} cached, {} fetched)",
+        label,
         final_items.len(),
         cache_hits,
         fetched_count
     );
 
-    Ok(final_items)
+    Ok((final_items, new_entries))
 }
