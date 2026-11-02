@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-06T02:52:00Z",
+  "title": "Design System: Faptopia",
+  "extensions": {
+    "colorMeta": {
+      "primary-bg": {
+        "role": "neutral",
+        "displayName": "Room",
+        "canonical": "oklch(0 0 0)",
+        "tonalRamp": ["#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000", "#000000"]
+      },
+      "surface-elevated": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "oklch(0.04 0 0)",
+        "tonalRamp": ["#000000", "#000000", "#020202", "#050505", "#080808", "#0a0a0a", "#0d0d0d", "#0f0f0f"]
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Elevated",
+        "canonical": "oklch(0.08 0 0)",
+        "tonalRamp": ["#010101", "#040404", "#080808", "#0b0b0b", "#0f0f0f", "#121212", "#161616", "#191919"]
+      },
+      "ink-primary": {
+        "role": "neutral",
+        "displayName": "Ink Primary",
+        "canonical": "oklch(0.94 0 0)",
+        "tonalRamp": ["#3c3c3c", "#5c5c5c", "#7a7a7a", "#999999", "#b8b8b8", "#d6d6d6", "#eaeaea", "#f0f0f0"]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Ink Secondary",
+        "canonical": "oklch(0.56 0 0)",
+        "tonalRamp": ["#242424", "#3a3a3a", "#505050", "#666666", "#7d7d7d", "#888888", "#a3a3a3", "#bbbbbb"]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Ink Muted",
+        "canonical": "oklch(0.38 0 0)",
+        "tonalRamp": ["#131313", "#222222", "#313131", "#404040", "#505050", "#555555", "#727272", "#8c8c8c"]
+      },
+      "accent-reddit": {
+        "role": "primary",
+        "displayName": "Accent Reddit",
+        "canonical": "oklch(0.59 0.18 32)",
+        "tonalRamp": ["#471300", "#701e00", "#992800", "#c23300", "#eb3e00", "#ff5817", "#ff7535", "#ff884c"]
+      },
+      "accent-4chan": {
+        "role": "primary",
+        "displayName": "Accent 4chan",
+        "canonical": "oklch(0.62 0.12 150)",
+        "tonalRamp": ["#082e15", "#124d23", "#1a6a31", "#228840", "#2ea44f", "#3db85e", "#53cb70", "#6edb84"]
+      },
+      "border-subtle": {
+        "role": "neutral",
+        "displayName": "Border Subtle",
+        "canonical": "oklch(0.12 0 0 / 0.06)",
+        "tonalRamp": ["rgba(255,255,255,0.02)", "rgba(255,255,255,0.03)", "rgba(255,255,255,0.04)", "rgba(255,255,255,0.05)", "rgba(255,255,255,0.06)", "rgba(255,255,255,0.08)", "rgba(255,255,255,0.10)", "rgba(255,255,255,0.12)"]
+      }
+    },
+    "typographyMeta": {
+      "label": { "displayName": "Label / UI", "purpose": "Gallery toggle buttons — uppercase platform names." },
+      "label-ui": { "displayName": "Label / Tab", "purpose": "Source tab labels like 'r/hotwife'." },
+      "body-small": { "displayName": "Body / Small", "purpose": "Nav hint text." },
+      "label-chip": { "displayName": "Label / Chip", "purpose": "Source label chip on mobile." },
+      "body-tab": { "displayName": "Body / Tab", "purpose": "Tab button text labels." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "ease-default", "value": "ease-out", "purpose": "Default easing for hover and state transitions." },
+      { "name": "ease-normal", "value": "250ms ease-out", "purpose": "Component state transitions (color, opacity)." },
+      { "name": "ease-fast", "value": "150ms ease-out", "purpose": "Quick hover responses." },
+      { "name": "ease-board-switch", "value": "220ms cubic-bezier(0.22,1,0.36,1)", "purpose": "Mobile board switch slide animation." },
+      { "name": "ease-board-tabs", "value": "250ms ease-out", "purpose": "Board dot transitions." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "768px", "condition": "max-width or pointer:coarse", "description": "Switches to vertical reels layout, board dots, platform switcher." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Tab Button (resting)",
+      "kind": "button",
+      "refersTo": "tab-button",
+      "description": "Source tab at rest in the desktop tab bar.",
+      "html": "<button class=\"ds-tab\"><span class=\"ds-tab-label\">r/hotwife</span><span class=\"ds-tab-close\">×</span></button>",
+      "css": ".ds-tab { background: #141414; color: #888; border: 1px solid rgba(255,255,255,0.06); padding: 8px 16px; border-radius: 8px; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 8px; font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 0.85rem; font-weight: 500; transition: all 150ms ease-out; } .ds-tab:hover { background: #1a1a1a; color: #f0f0f0; } .ds-tab:focus-visible { outline: 2px solid #ff4500; outline-offset: 2px; } .ds-tab-close { font-size: 1rem; opacity: 0.4; line-height: 1; } .ds-tab:hover .ds-tab-close { opacity: 1; }"
+    },
+    {
+      "name": "Tab Button (active)",
+      "kind": "button",
+      "refersTo": "tab-button-active",
+      "description": "Currently selected source tab.",
+      "html": "<button class=\"ds-tab-active\"><span class=\"ds-tab-label\">r/hotwife</span><span class=\"ds-tab-close\">×</span></button>",
+      "css": ".ds-tab-active { background: #1a1a1a; color: #f0f0f0; border: 1px solid rgba(255,255,255,0.12); padding: 8px 16px; border-radius: 8px; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 8px; font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 0.85rem; font-weight: 500; } .ds-tab-close { font-size: 1rem; opacity: 0.4; line-height: 1; } .ds-tab-active:hover .ds-tab-close { opacity: 1; }"
+    },
+    {
+      "name": "Gallery Toggle (4chan)",
+      "kind": "button",
+      "refersTo": "gallery-toggle-4chan",
+      "description": "Button in the Reddit gallery to switch to 4chan.",
+      "html": "<a class=\"ds-toggle-4chan\" href=\"faptopia_4chan.html\">4chan</a>",
+      "css": ".ds-toggle-4chan { display: inline-flex; align-items: center; background: #0f9d58; color: #f0f0f0; border: 1px solid rgba(255,255,255,0.06); padding: 8px 16px; border-radius: 8px; text-decoration: none; font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.08em; opacity: 0.85; transition: all 150ms ease-out; } .ds-toggle-4chan:hover { opacity: 1; border-color: rgba(255,255,255,0.15); } .ds-toggle-4chan:focus-visible { outline: 2px solid #ff4500; outline-offset: 2px; }"
+    },
+    {
+      "name": "Gallery Toggle (Reddit)",
+      "kind": "button",
+      "refersTo": "gallery-toggle-reddit",
+      "description": "Button in the 4chan gallery to switch to Reddit.",
+      "html": "<a class=\"ds-toggle-reddit\" href=\"faptopia_reddit.html\">reddit</a>",
+      "css": ".ds-toggle-reddit { display: inline-flex; align-items: center; background: #ff4500; color: #f0f0f0; border: 1px solid rgba(255,255,255,0.06); padding: 8px 16px; border-radius: 8px; text-decoration: none; font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.08em; opacity: 0.85; transition: all 150ms ease-out; } .ds-toggle-reddit:hover { opacity: 1; border-color: rgba(255,255,255,0.15); } .ds-toggle-reddit:focus-visible { outline: 2px solid #ff4500; outline-offset: 2px; }"
+    },
+    {
+      "name": "Board Dot (resting)",
+      "kind": "chip",
+      "refersTo": "board-dot",
+      "description": "Inactive board indicator in the mobile bottom bar.",
+      "html": "<button class=\"ds-board-dot\"></button>",
+      "css": ".ds-board-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.2); border: none; padding: 0; cursor: pointer; transition: all 250ms ease-out; position: relative; } .ds-board-dot::before { content: ''; position: absolute; top: -18px; left: -18px; right: -18px; bottom: -18px; } .ds-board-dot:active { transform: scale(0.85); }"
+    },
+    {
+      "name": "Board Dot (active)",
+      "kind": "chip",
+      "refersTo": "board-dot-active-reddit",
+      "description": "Active board indicator – Reddit mode.",
+      "html": "<button class=\"ds-board-dot-active\"></button>",
+      "css": ".ds-board-dot-active { width: 20px; height: 8px; border-radius: 4px; background: #ff4500; border: none; padding: 0; cursor: pointer; transition: all 250ms ease-out; box-shadow: 0 0 8px rgba(255,69,0,0.4); position: relative; } .ds-board-dot-active::before { content: ''; position: absolute; top: -18px; left: -18px; right: -18px; bottom: -18px; }"
+    },
+    {
+      "name": "Progress Counter",
+      "kind": "custom",
+      "refersTo": "nav-hint",
+      "description": "Current position indicator in the gallery.",
+      "html": "<div class=\"ds-progress\">3 / 47</div>",
+      "css": ".ds-progress { position: fixed; top: 56px; right: 14px; background: rgba(10,10,10,0.75); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: #888; font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 0.72rem; font-weight: 600; padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.06); z-index: 500; pointer-events: none; letter-spacing: 0.04em; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Dark Room",
+    "overview": "Faptopia's gallery is not a UI — it's a private room. The walls are black, the lights are off, and the only thing illuminated is the content. The interface disappears into the dark; what remains is a scroll of videos with the barest navigation to move through them. Nothing glow, nothing shiny, nothing announces itself.\n\nThis system explicitly rejects: streaming-platform gloss (gradient overlays, floating play buttons, hero banners), dashboard sterility (data tables, sidebar nav, stat counters), and tube-site density (thumbnails grids, trending badges, engagement loops). It is a single-purpose tool: open one file, watch content, close the file. No onboarding, no splash, no performance.",
+    "keyCharacteristics": [
+      "Pure black background as the default state of the room.",
+      "Tonal layering, not shadows: elevation through background lightness.",
+      "Platform identity via two accent colors, rest of interface is pure grayscale.",
+      "Single-column, single-item-at-a-time browsing.",
+      "Every pixel of chrome justified by function."
+    ],
+    "rules": [
+      { "name": "The Flat-By-Default Rule", "body": "No box-shadow is defined anywhere in the system. A surface's z-position is determined solely by its lightness against the room.", "section": "elevation" },
+      { "name": "The Two-Accent Rule", "body": "Reddit orange and 4chan green are the only saturated colors. They signal platform context, not interactivity.", "section": "colors" },
+      { "name": "The No-Display Rule", "body": "There is no display typography. No hero heading, no headline, no title — the content is the display.", "section": "typography" }
+    ],
+    "dos": [
+      "Use the three-step gray ramp (black → #0a0a0a → #141414) for all elevation.",
+      "Reserve saturated color exclusively for platform context.",
+      "Keep the chrome visually subordinate.",
+      "Use prefers-reduced-motion: reduce to strip all transitions.",
+      "Test every breakpoint for correct viewport fill.",
+      "Use backdrop-filter(blur) as an ambient effect on overlays, not as a primary distinguisher.",
+      "Use safe-area-inset-aware positioning on notched phones."
+    ],
+    "donts": [
+      "Don't use box-shadow anywhere — depth is tonal, not shadowed.",
+      "Don't introduce a third accent color.",
+      "Don't use glassmorphism as a decorative style.",
+      "Don't over-chrome. No icons, no search, no filters.",
+      "Don't animate with bounce, elastic, or spring easing.",
+      "Don't use gradient text, gradient borders, or gradient backgrounds.",
+      "Don't add splash screens, onboarding, or introductory elements."
+    ]
+  }
+}

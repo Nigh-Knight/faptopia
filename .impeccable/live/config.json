@@ -1,0 +1,8 @@
+{
+  "files": ["templates/gallery.html"],
+  "insertBefore": "</head>",
+  "commentSyntax": "html",
+  "autoOpen": false,
+  "detectFramework": false,
+  "cspChecked": true
+}

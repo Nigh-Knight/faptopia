@@ -7,8 +7,9 @@ export default {
         if (path.startsWith('/video/redgifs/')) {
             const gifId = path.replace('/video/redgifs/', '');
             try {
-                const videoUrl = await resolveRedgifsVideo(gifId);
-                return proxyVideo(videoUrl, {
+                const { hd, sd } = await resolveRedgifsVideo(gifId);
+                // Try HD first, fall back to SD if the CDN refuses it
+                return proxyVideo([hd, sd], {
                     'Referer': 'https://www.redgifs.com/',
                     'Origin': 'https://www.redgifs.com',
                 }, request);
@@ -33,6 +34,7 @@ export default {
 // Cached RedGifs auth token (persists within worker isolate lifetime)
 let cachedToken = null;
 let tokenExpiry = 0;
+const RESOLVE_CACHE_TTL_SECS = 4 * 60 * 60;
 
 async function getRedgifsToken() {
     if (cachedToken && Date.now() < tokenExpiry) {
@@ -49,34 +51,60 @@ async function getRedgifsToken() {
 }
 
 async function resolveRedgifsVideo(gifId) {
-    const token = await getRedgifsToken();
-    const resp = await fetch(`https://api.redgifs.com/v2/gifs/${gifId.toLowerCase()}`, {
-        headers: {
-            'User-Agent': 'rust:faptopia:v1.0',
-            'Authorization': `Bearer ${token}`,
-        }
-    });
+    const normalized = gifId.toLowerCase();
+    const cacheKey = new Request(`https://faptopia-resolve-cache.local/redgifs/${normalized}`);
+    const cache = caches.default;
 
-    if (!resp.ok) {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+        const text = await cached.text();
+        if (text) {
+            try {
+                const parsed = JSON.parse(text);
+                if (parsed && parsed.hd) return { hd: parsed.hd, sd: parsed.sd || parsed.hd };
+            } catch (_) {
+                // Old cache format: plain URL string
+                return { hd: text, sd: text };
+            }
+        }
+    }
+
+    const fetchResolve = async (token) => {
+        const resp = await fetch(`https://api.redgifs.com/v2/gifs/${normalized}`, {
+            headers: {
+                'User-Agent': 'rust:faptopia:v1.0',
+                'Authorization': `Bearer ${token}`,
+            }
+        });
+        if (!resp.ok) throw new Error(`RedGifs API error: ${resp.status}`);
+        const data = await resp.json();
+        const urls = data.gif.urls;
+        const hd = urls.hd || urls.sd;
+        const sd = urls.sd || hd;
+        return { hd, sd };
+    };
+
+    let resolved;
+    try {
+        const token = await getRedgifsToken();
+        resolved = await fetchResolve(token);
+    } catch (_) {
         // Token might be expired, retry with a fresh one
         cachedToken = null;
         const newToken = await getRedgifsToken();
-        const retry = await fetch(`https://api.redgifs.com/v2/gifs/${gifId.toLowerCase()}`, {
-            headers: {
-                'User-Agent': 'rust:faptopia:v1.0',
-                'Authorization': `Bearer ${newToken}`,
-            }
-        });
-        if (!retry.ok) throw new Error(`RedGifs API error: ${retry.status}`);
-        const data = await retry.json();
-        return data.gif.urls.hd || data.gif.urls.sd;
+        resolved = await fetchResolve(newToken);
     }
-
-    const data = await resp.json();
-    return data.gif.urls.hd || data.gif.urls.sd;
+    await cache.put(cacheKey, new Response(JSON.stringify(resolved), {
+        headers: {
+            'Cache-Control': `public, max-age=${RESOLVE_CACHE_TTL_SECS}`,
+            'Content-Type': 'application/json',
+        },
+    }));
+    return resolved;
 }
 
-async function proxyVideo(targetUrl, headers, originalRequest) {
+async function proxyVideo(targetUrls, headers, originalRequest) {
+    const urls = Array.isArray(targetUrls) ? targetUrls : [targetUrls];
     const reqHeaders = {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
         ...headers,
@@ -88,31 +116,40 @@ async function proxyVideo(targetUrl, headers, originalRequest) {
         reqHeaders['Range'] = range;
     }
 
-    const resp = await fetch(targetUrl, { headers: reqHeaders });
+    let lastStatus = 502;
+    for (const targetUrl of urls) {
+        const resp = await fetch(targetUrl, { headers: reqHeaders });
+        if (!resp.ok) {
+            lastStatus = resp.status;
+            continue;
+        }
 
-    const responseHeaders = new Headers();
-    responseHeaders.set('Access-Control-Allow-Origin', '*');
-    responseHeaders.set('Cache-Control', 'public, max-age=3600');
-    responseHeaders.set('Accept-Ranges', 'bytes');
+        const responseHeaders = new Headers();
+        responseHeaders.set('Access-Control-Allow-Origin', '*');
+        responseHeaders.set('Cache-Control', 'public, max-age=3600');
+        responseHeaders.set('Accept-Ranges', 'bytes');
 
-    // Forward essential headers
-    for (const h of ['Content-Length', 'Content-Range', 'Accept-Ranges']) {
-        const val = resp.headers.get(h);
-        if (val) responseHeaders.set(h, val);
+        // Forward essential headers
+        for (const h of ['Content-Length', 'Content-Range', 'Accept-Ranges']) {
+            const val = resp.headers.get(h);
+            if (val) responseHeaders.set(h, val);
+        }
+
+        // Set correct Content-Type based on file extension (Brave/Chrome are strict about MIME types)
+        if (targetUrl.includes('.webm')) {
+            responseHeaders.set('Content-Type', 'video/webm');
+        } else if (targetUrl.includes('.mp4')) {
+            responseHeaders.set('Content-Type', 'video/mp4');
+        } else {
+            const ct = resp.headers.get('Content-Type');
+            if (ct) responseHeaders.set('Content-Type', ct);
+        }
+
+        return new Response(resp.body, {
+            status: resp.status,
+            headers: responseHeaders,
+        });
     }
 
-    // Set correct Content-Type based on file extension (Brave/Chrome are strict about MIME types)
-    if (targetUrl.includes('.webm')) {
-        responseHeaders.set('Content-Type', 'video/webm');
-    } else if (targetUrl.includes('.mp4')) {
-        responseHeaders.set('Content-Type', 'video/mp4');
-    } else {
-        const ct = resp.headers.get('Content-Type');
-        if (ct) responseHeaders.set('Content-Type', ct);
-    }
-
-    return new Response(resp.body, {
-        status: resp.status,
-        headers: responseHeaders,
-    });
+    return new Response('Video unavailable', { status: lastStatus });
 }

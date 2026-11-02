@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
     <title>Media Gallery</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="theme-color" content="#000000">
@@ -10,29 +11,35 @@
     <style>{{STYLES}}</style>
 </head>
 <body tabindex="0">
-    <!-- Mobile: platform switcher bar -->
-    <div class="platform-switcher" id="platform-switcher">
-        <a class="platform-btn reddit" href="faptopia_reddit.html">Reddit</a>
-        <a class="platform-btn fourchan" href="faptopia_4chan.html">4chan</a>
+    <!-- Mobile: merged board/platform switcher (floating top-left) -->
+    <div class="board-switcher" id="board-switcher">
+        <button class="board-switcher__trigger" id="board-switcher-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch board">
+            <span class="board-switcher__dot" id="board-switcher-dot"></span>
+            <span class="board-switcher__label" id="board-switcher-label"></span>
+            <span class="board-switcher__caret" aria-hidden="true"></span>
+        </button>
+        <div class="board-switcher__menu" id="board-switcher-menu" role="listbox" aria-activedescendant="board-switcher-menu" aria-label="Boards"></div>
     </div>
 
     <div class="tabs">
         {{TABS}}
     </div>
 
-    <!-- Mobile: subreddit label overlay -->
-    <div class="source-label" id="source-label">
-        <span class="source-label-dot"></span>
-        <span id="source-label-text"></span>
+    <div class="board-viewport" id="board-viewport">
+        <div class="board-track" id="board-track">
+            {{SECTIONS}}
+        </div>
     </div>
 
-    {{SECTIONS}}
-
-    <!-- Mobile: bottom tab bar for boards -->
-    <div class="board-tabs" id="board-tabs"></div>
-
-    <div class="nav-hint" id="nav-hint">Press C to switch boards · Press Z ← → X to navigate · Press P to toggle auto-scroll</div>
+    <div id="progress-counter" class="progress-counter"></div>
+    <div class="undo-toast" id="undo-toast">
+        <span id="undo-toast-text">Tab closed</span>
+        <button id="undo-toast-btn">Undo</button>
+    </div>
+    <a class="stats-indicator" id="stats-indicator" href="faptopia_stats.html" target="_blank">● Local stats</a>
+    <div class="nav-hint" id="nav-hint">Z / X to navigate  ·  ← / → to switch boards  ·  P to toggle auto-scroll  ·  Ctrl+S to save</div>
     <div class="autoscroll-alert" id="autoscroll-alert"></div>
+    <div class="throttle-toast" id="throttle-toast"></div>
     <script>{{SCRIPT}}</script>
 </body>
 </html>

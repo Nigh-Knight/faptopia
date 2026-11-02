@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Faptopia Stats</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        :root {
+            --bg: #000;
+            --surface: #0a0a0a;
+            --elevated: #141414;
+            --text: #f0f0f0;
+            --dim: #888;
+            --muted: #555;
+            --accent: #ff4500;
+            --border: rgba(255,255,255,0.06);
+            --font: 'Inter', -apple-system, system-ui, sans-serif;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+        .page {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 48px 24px 80px;
+        }
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .subtitle {
+            font-size: 0.8rem;
+            color: var(--dim);
+            margin-bottom: 40px;
+        }
+        .section { margin-bottom: 32px; }
+        .section-title {
+            font-size: 0.65rem;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+        /* Summary cards */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+        .stat-card {
+            background: var(--elevated);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+        .stat-num {
+            font-size: 1.2rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .stat-label {
+            font-size: 0.65rem;
+            color: var(--dim);
+            font-weight: 500;
+            text-align: center;
+        }
+        /* Bar chart */
+        .bar-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .bar-label {
+            font-size: 0.75rem;
+            color: var(--dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 0 0 130px;
+        }
+        .bar-track {
+            flex: 1;
+            height: 6px;
+            background: var(--elevated);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .bar-fill {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 3px;
+        }
+        .bar-value {
+            font-size: 0.72rem;
+            color: var(--muted);
+            white-space: nowrap;
+            flex: 0 0 52px;
+            text-align: right;
+        }
+        /* 7-day chart */
+        .activity-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            height: 56px;
+            padding-bottom: 20px;
+        }
+        .day-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 5px;
+        }
+        .day-bar {
+            width: 100%;
+            border-radius: 3px 3px 0 0;
+            background: var(--elevated);
+            min-height: 3px;
+        }
+        .day-bar.active { background: var(--accent); }
+        .day-label {
+            font-size: 0.6rem;
+            color: var(--muted);
+        }
+        /* Recent sessions */
+        .session-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.8rem;
+        }
+        .session-row:last-child { border-bottom: none; }
+        .session-date { color: var(--dim); flex: 0 0 100px; }
+        .session-platform {
+            color: var(--accent);
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.65rem;
+            flex: 0 0 48px;
+        }
+        .session-duration { color: var(--text); font-weight: 500; }
+        .session-videos { color: var(--dim); margin-left: auto; }
+        /* Empty state */
+        .empty {
+            text-align: center;
+            padding: 80px 20px;
+        }
+        .empty h2 { font-size: 1rem; color: var(--dim); margin-bottom: 12px; }
+        .empty p { font-size: 0.82rem; color: var(--muted); line-height: 1.7; }
+        .empty code {
+            background: var(--elevated);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 0.75rem;
+            color: var(--dim);
+        }
+        /* Clear button */
+        .clear-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 69, 0, 0.3);
+            color: var(--accent);
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-family: var(--font);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 150ms ease-out;
+        }
+        .clear-btn:hover { background: rgba(255,69,0,0.1); border-color: var(--accent); }
+        @media (max-width: 480px) {
+            .stat-grid { grid-template-columns: repeat(2, 1fr); }
+            .bar-label { flex: 0 0 80px; }
+            .session-date { flex: 0 0 80px; font-size: 0.72rem; }
+        }
+    </style>
+</head>
+<body>
+<div class="page" id="app">
+    <div class="empty">
+        <h2>No stats found</h2>
+        <p>
+            Stats are saved in your browser while using the gallery.<br><br>
+            Open this page from the same origin as your galleries.<br>
+            Use <code>faptopia --serve</code> for reliable cross-page stats.
+        </p>
+    </div>
+</div>
+<script>
+(function() {
+    function fmt(secs) {
+        secs = Math.round(secs);
+        if (secs < 60) return secs + 's';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+        return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+    }
+
+    function fmtDate(ts) {
+        var d = new Date(ts);
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function fmtBytes(n) {
+        if (!n) return '0 B';
+        var k = 1024, u = ['B','KB','MB','GB'];
+        var i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(k)));
+        return (n / Math.pow(k, i)).toFixed(i === 0 ? 0 : 1) + ' ' + u[i];
+    }
+
+    // Ask the SW for video cache stats and inject a section if available
+    function renderVideoCache() {
+        if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+        var ch = new MessageChannel();
+        var done = false;
+        var timer = setTimeout(function() { done = true; }, 1500);
+        navigator.serviceWorker.addEventListener('message', function onMsg(e) {
+            if (done) return;
+            var d = e.data || {};
+            if (d.type !== 'video-cache-stats') return;
+            done = true; clearTimeout(timer);
+            navigator.serviceWorker.removeEventListener('message', onMsg);
+            injectCacheSection(d);
+        });
+        navigator.serviceWorker.controller.postMessage({ type: 'video-cache-stats' });
+    }
+
+    function injectCacheSection(d) {
+        var app = document.getElementById('app');
+        if (!app) return;
+        var quotaLine = '';
+        if (d.quota && d.quota.usage != null && d.quota.quota) {
+            quotaLine = '<div class="bar-row"><span class="bar-label">Device</span>'
+                + '<div class="bar-track"><div class="bar-fill" style="width:'
+                + Math.min(100, Math.round(d.quota.usage / d.quota.quota * 100)) + '%"></div></div>'
+                + '<span class="bar-value">' + fmtBytes(d.quota.usage) + ' / ' + fmtBytes(d.quota.quota) + '</span></div>';
+        }
+        var section = document.createElement('div');
+        section.className = 'section';
+        section.innerHTML = '<div class="section-title">Video Cache</div>'
+            + '<div class="stat-grid">'
+            + '<div class="stat-card"><span class="stat-num">' + d.count + '</span><span class="stat-label">Videos</span></div>'
+            + '<div class="stat-card"><span class="stat-num">' + fmtBytes(d.bytes) + '</span><span class="stat-label">On Device</span></div>'
+            + '</div>' + quotaLine
+            + '<button class="clear-btn" id="clear-videos-btn" style="margin-top:12px">Clear Video Cache</button>';
+        // Insert near the bottom, before the "Clear All Data" section
+        var clearAll = document.querySelector('.clear-btn');
+        if (clearAll && clearAll.parentNode && clearAll.parentNode.parentNode === app) {
+            app.insertBefore(section, clearAll.parentNode);
+        } else {
+            app.appendChild(section);
+        }
+        document.getElementById('clear-videos-btn').addEventListener('click', function() {
+            if (!confirm('Clear ' + d.count + ' cached video' + (d.count === 1 ? '' : 's') + ' (' + fmtBytes(d.bytes) + ')?')) return;
+            var sw = navigator.serviceWorker.controller;
+            if (!sw) return;
+            navigator.serviceWorker.addEventListener('message', function onMsg(e) {
+                if (!e.data || e.data.type !== 'video-cache-cleared') return;
+                navigator.serviceWorker.removeEventListener('message', onMsg);
+                location.reload();
+            });
+            sw.postMessage({ type: 'video-cache-clear' });
+        });
+    }
+
+    var raw;
+    try { raw = localStorage.getItem('faptopia_stats'); } catch(e) { raw = null; }
+
+    var data;
+    if (raw) { try { data = JSON.parse(raw); } catch(e) { data = null; } }
+    if (!data || !data.sessions || !data.sessions.length) {
+        renderVideoCache();
+        return;
+    }
+
+    var sessions = data.sessions;
+
+    // Aggregate lifetime stats
+    var totalSecs = 0, totalVideos = 0, totalSaved = 0;
+    var allSources = {};
+    var byDate = {};
+
+    for (var i = 0; i < sessions.length; i++) {
+        var s = sessions[i];
+        totalSecs += s.duration || 0;
+        totalVideos += s.videosSeen || 0;
+        totalSaved += s.saved || 0;
+        var srcs = s.sources || {};
+        for (var src in srcs) {
+            allSources[src] = (allSources[src] || 0) + srcs[src];
+        }
+        if (s.date) byDate[s.date] = (byDate[s.date] || 0) + 1;
+    }
+
+    var topSources = Object.entries(allSources).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 10);
+    var maxSrc = topSources.length ? topSources[0][1] : 1;
+    var avgSecs = sessions.length ? Math.round(totalSecs / sessions.length) : 0;
+
+    // Streak
+    var streak = 0;
+    var d = new Date();
+    if (!byDate[d.toISOString().slice(0, 10)]) d.setDate(d.getDate() - 1);
+    while (byDate[d.toISOString().slice(0, 10)]) {
+        streak++;
+        d.setDate(d.getDate() - 1);
+    }
+
+    // Last 7 days
+    var last7 = [];
+    var maxDay = 0;
+    for (var i = 6; i >= 0; i--) {
+        var day = new Date();
+        day.setDate(day.getDate() - i);
+        var key = day.toISOString().slice(0, 10);
+        var count = byDate[key] || 0;
+        last7.push({ date: key.slice(5), count: count });
+        if (count > maxDay) maxDay = count;
+    }
+    if (maxDay === 0) maxDay = 1;
+
+    // Recent sessions (last 10, newest first)
+    var recent = sessions.slice(-10).reverse();
+
+    // Build HTML
+    var html = '<h1>Faptopia Stats</h1><p class="subtitle">Your gallery usage history</p>';
+
+    // Summary
+    html += '<div class="section"><div class="section-title">All Time</div>';
+    html += '<div class="stat-grid">';
+    html += '<div class="stat-card"><span class="stat-num">' + sessions.length + '</span><span class="stat-label">Sessions</span></div>';
+    html += '<div class="stat-card"><span class="stat-num">' + fmt(totalSecs) + '</span><span class="stat-label">Total Time</span></div>';
+    html += '<div class="stat-card"><span class="stat-num">' + fmt(avgSecs) + '</span><span class="stat-label">Avg Session</span></div>';
+    html += '<div class="stat-card"><span class="stat-num">' + streak + 'd</span><span class="stat-label">Streak</span></div>';
+    html += '</div></div>';
+
+    // Most watched
+    if (topSources.length) {
+        html += '<div class="section"><div class="section-title">Most Watched</div>';
+        for (var i = 0; i < topSources.length; i++) {
+            var src = topSources[i][0], secs = topSources[i][1];
+            var pct = Math.round(secs / maxSrc * 100);
+            html += '<div class="bar-row">'
+                + '<span class="bar-label">' + src + '</span>'
+                + '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div>'
+                + '<span class="bar-value">' + fmt(secs) + '</span>'
+                + '</div>';
+        }
+        html += '</div>';
+    }
+
+    // 7-day chart
+    html += '<div class="section"><div class="section-title">Last 7 Days</div><div class="activity-chart">';
+    for (var i = 0; i < last7.length; i++) {
+        var day = last7[i];
+        var h = day.count > 0 ? Math.max(8, Math.round(day.count / maxDay * 40)) : 3;
+        html += '<div class="day-col">'
+            + '<div class="day-bar' + (day.count > 0 ? ' active' : '') + '" style="height:' + h + 'px"></div>'
+            + '<span class="day-label">' + day.date + '</span>'
+            + '</div>';
+    }
+    html += '</div></div>';
+
+    // Recent sessions
+    html += '<div class="section"><div class="section-title">Recent Sessions</div>';
+    for (var i = 0; i < recent.length; i++) {
+        var s = recent[i];
+        html += '<div class="session-row">'
+            + '<span class="session-date">' + fmtDate(s.start) + '</span>'
+            + '<span class="session-platform">' + (s.platform || '?') + '</span>'
+            + '<span class="session-duration">' + fmt(s.duration || 0) + '</span>'
+            + '<span class="session-videos">' + (s.videosSeen || 0) + ' videos</span>'
+            + '</div>';
+    }
+    html += '</div>';
+
+    // Clear data
+    html += '<div class="section">'
+        + '<button class="clear-btn" id="clear-btn">Clear All Data</button>'
+        + '</div>';
+
+    document.getElementById('app').innerHTML = html;
+
+    document.getElementById('clear-btn').addEventListener('click', function() {
+        if (confirm('Clear all usage stats?')) {
+            localStorage.removeItem('faptopia_stats');
+            location.reload();
+        }
+    });
+
+    renderVideoCache();
+})();
+</script>
+</body>
+</html>
