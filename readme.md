@@ -4,17 +4,19 @@
 
 <video src="https://github.com/user-attachments/assets/2d701d76-4562-4b5e-baae-cb0f6e0948fc" controls width="600"></video>
 
-A command-line tool for creating gallery views of media content from Reddit and 4chan's /gif/ board.
+A CLI tool that builds interactive, standalone HTML video galleries from Reddit and 4chan's /gif/ board. Single binary, no server required.
 
 ## Features
 
-- Create scrollable galleries from Reddit media embeds
-- Create video galleries from 4chan /gif/ threads
-- Multi-tab interface for viewing multiple sources simultaneously
-- Keyboard navigation (Z, X, and C keys)
-- Touch support for mobile viewing
-- Automatic video playback management
-- Lazy loading for better performance
+- Galleries from Reddit (via RedGifs) and 4chan /gif/ threads
+- Multi-tab interface — multiple subreddits or threads in one gallery
+- Keyboard navigation (Z / X to scroll, C to switch boards, P for auto-scroll, S to save)
+- Touch support: swipe to navigate, wrap-around at ends
+- Progress counter overlay (e.g. `3 / 47`)
+- Lazy loading and autoplay management for performance
+- PWA-ready: serve over local network and add to phone home screen
+- Cloudflare Pages deploy (`faptopia deploy`) for sharing
+- Usage stats page tracking sessions, time per source, and streaks
 
 ## Installation
 
@@ -27,7 +29,7 @@ Download the latest release for your platform from [GitHub Releases](https://git
 - **macOS**: `faptopia-macos-x86_64`
 
 ```bash
-# Linux/macOS - make it executable:
+# Linux/macOS — make it executable:
 chmod +x faptopia-linux-x86_64
 ./faptopia-linux-x86_64 --help
 
@@ -43,65 +45,149 @@ cd faptopia
 cargo build --release
 ```
 
-The binary will be available in `target/release/faptopia`
+Binary: `target/release/faptopia`
+
+---
 
 ## Usage
 
 ### Reddit Galleries
 
 ```bash
-faptopia reddit <subreddit>:<modifier>:<timeframe>
+# Format string
+faptopia reddit r/subreddit:modifier:timeframe
+
+# Full URL
+faptopia reddit https://reddit.com/r/subreddit/top/?t=month
+
+# Multiple subreddits (one tab each)
+faptopia reddit r/sub1:top:month r/sub2:hot:day
 ```
 
-**Example:**
-```bash
-faptopia reddit hotwife:top:month
-```
+| Parameter | Values |
+|-----------|--------|
+| modifier | `top`, `hot`, `new` |
+| timeframe | `hour`, `day`, `week`, `month`, `year`, `all` |
 
-This creates `faptopia_reddit.html` with media from r/hotwife's top posts this month.
+Output: `faptopia_reddit.html`
 
-**Parameters:**
-- `subreddit`: Name of the subreddit
-- `modifier`: Sort type (top, hot, new)
-- `timeframe`: Time period (hour, day, week, month, year, all)
+Reddit caps anonymous traffic at about one request per minute, so faptopia pulls
+one Atom feed per board (up to 100 posts) and waits between boards. Each board
+therefore takes roughly a minute; resolved video URLs are cached for 4 hours in
+`.faptopia_cache.json`, so re-running the same board is instant apart from the
+single feed request.
 
 ### 4chan Galleries
 
 ```bash
-faptopia 4chan <thread_id> [thread_id2] [thread_id3] ...
-```
-
-**Example:**
-```bash
+# Single thread
 faptopia 4chan 123456789
-```
 
-This creates `faptopia_4chan.html` with videos from the specified thread.
-
-**Multiple threads:**
-```bash
+# Multiple threads (one tab each)
 faptopia 4chan 123456789 987654321
 ```
 
-Creates a multi-tab gallery with each thread in its own tab.
+Output: `faptopia_4chan.html`
 
-## Gallery Navigation
+### Gallery Flags
 
-### Keyboard Controls
-- `Z` key: Go to previous media item
-- `X` key: Go to next media item
-- `C` key: Switch to next tab
+```bash
+--random      Shuffle boards/threads AND videos in random order
+--reverse     Reverse board/thread AND video order (start from last)
+--serve       Start local server for mobile access (default port 6969)
+--port N      Custom port for --serve
+--deploy      Deploy to Cloudflare Pages after generating gallery
+```
 
-### Tab Management
-- Click on tabs to switch between different sources
-- Click the `×` button on a tab to close it (minimum 1 tab required)
+Examples:
 
-### Touch Support
-- Swipe left/right on touch devices to navigate media
-- Videos autoplay when in view
-- Audio automatically mutes when switching tabs or navigating away
+```bash
+faptopia reddit r/hotwife:top:month --random
+faptopia 4chan 123456789 --reverse
+faptopia reddit r/hotwife:top:month --serve
+faptopia 4chan 123456789 --deploy
+```
+
+---
+
+## Commands
+
+### `faptopia deploy`
+
+Deploy your existing gallery files to Cloudflare Pages without regenerating them.
+
+```bash
+faptopia deploy
+```
+
+Requires `wrangler` CLI to be installed and authenticated (`wrangler login`).
+Deploys to `https://faptopia.pages.dev` by default.
+
+### `faptopia stats`
+
+Generate a standalone stats page from your local browser history.
+
+```bash
+faptopia stats
+# Creates faptopia_stats.html
+
+# Or use --serve to share the same origin (required for cross-page localStorage access):
+faptopia reddit r/hotwife:top:month --serve
+# Then open http://localhost:6969/faptopia_stats.html
+```
+
+The stats page shows:
+- Total sessions, time watched, average session length
+- Day streak
+- Most-watched sources (bar chart)
+- Last 7 days activity
+- Recent session history
+
+---
+
+## Gallery Controls
+
+### Keyboard
+
+| Key | Action |
+|-----|--------|
+| `Z` | Previous video |
+| `X` | Next video |
+| `C` | Switch to next board/tab |
+| `P` | Toggle auto-scroll |
+| `S` | Save (download) current video |
+
+### Mobile
+
+- Swipe up/down to navigate
+- Wraps around at first/last item
+- Bottom tab bar for switching boards
+- Progress counter in top-right corner
+
+### Tabs
+
+- Click tabs to switch sources
+- Click `x` on a tab to close it (minimum 1 required)
+
+---
+
+## 4chan Userscript
+
+`userscript/faptopia_4chan.user.js` adds a launcher button to 4chan that automatically collects your pinned /gif/ threads and builds a `faptopia 4chan ...` command you can copy with one click.
+
+Install with [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/).
+
+Features:
+- Auto-detects pinned threads on any 4chan page
+- Checkbox list to select/deselect threads
+- "Copy" button (plain command) and "Copy + Deploy" button (with `--deploy`)
+- Live-syncs as you pin/unpin threads
+
+---
 
 ## Notes
 
-- Generated HTML files are standalone and work in any modern browser
-- Internet connection required to view media content
+- Generated HTML files are fully standalone — no server needed for basic use
+- An internet connection is required to stream the actual video content
+- The `--serve` flag is needed for stats to work across both gallery pages (they share `localStorage` on the same origin)
+- Toggle button in each gallery links to the other platform's file (both must be in the same directory)

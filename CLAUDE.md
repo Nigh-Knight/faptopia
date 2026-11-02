@@ -38,6 +38,13 @@ Templates are embedded at compile-time using `include_str!()` macros and rendere
   - Video state management (mute, autoplay, preload optimization)
   - Section-based scroll position tracking
   - Touch/swipe support
+  - **Video resilience layer** (RedGifs CDN throttles per-IP with fake 404s and infinite stalls):
+    - Auto-retry on `error` AND on cold-start stall (12s watchdog when no data arrives) with exponential backoff + jitter
+    - Time-based HD -> SD downgrade via `data-sd-url`: an 8s grace timer drops a stuck HD video to SD (throttled fetches hang silently, so retry-count downgrades took ~50s); in throttle mode, never-played videos start on SD directly. Skipped in proxied mode (the proxy falls back server-side)
+    - Burst circuit breaker: 3 failures within 30s enters throttle mode (3x backoff, preloading paused, toast shown); recovers automatically
+    - Manual Retry overlay restores the original HD source for a clean slate
+  - **Paced neighbor preloading**: while the focused video plays, its neighbors (wrap-around, so reverse navigation from first -> last stays warm) are warmed one at a time via `preload="auto"` (strictly 1 fetch in flight; the old eager preloader saturated the single HTTP/2 connection and was removed). Direction-aware — next warms first when going forward, prev first when going back — and the frontier extends a few videos ahead while the user lingers on a video
+  - Behavior verified by `tests/script_resilience.test.js` (node harness that evals the template with DOM stubs; run with `node tests/script_resilience.test.js`)
 
 ### Data Flow
 
@@ -81,7 +88,7 @@ Vec<String> (video URLs)          Vec<String> (video URLs)
 4. **Toggle Button** - Each gallery includes a button to switch to the other gallery file
 5. **Section-Based Tabs** - Gallery items indexed as `{section}-{item}` for scroll position tracking per tab
 6. **Lazy Loading** - Videos set `preload="none"` except first item (performance optimization)
-7. **Direct API Integration** - Uses RedGifs API v2 for Reddit media, 4chan JSON API for threads
+7. **Direct API Integration** - Uses the Reddit Atom feed + RedGifs API v2 for Reddit media, 4chan JSON API for threads
 8. **Progress Indicators** - Real-time progress display during RedGifs video fetching
 
 ## Platform-Specific Considerations
@@ -141,15 +148,27 @@ Key active dependencies and their purposes:
 
 ### Reddit Integration
 
-1. Fetches subreddit JSON from `reddit.com/r/{subreddit}/{modifier}/.json?t={time}`
-2. Extracts RedGifs iframe URLs from `media_embed.content` HTML
-3. Uses regex to extract RedGifs gif IDs from iframe URLs
-4. Calls RedGifs API v2 to get temporary auth token
-5. Resolves each gif ID to direct video URL (HD or SD fallback)
-6. Displays progress indicator during fetching
+Reddit has walled off its anonymous JSON API (403 "blocked by network security")
+and old.reddit.com now 302s logged-out clients to a login page, so media is
+pulled from the public Atom feed instead:
+
+1. Fetches `www.reddit.com/r/{subreddit}/{modifier}/.rss?t={time}&limit={n}`
+   (or `/user/{name}/.rss?sort={sort}&t={time}&limit={n}`)
+2. Regex-extracts RedGifs slugs from the `redgifs.com/watch/...` links inside
+   each entry's HTML-encoded body
+3. Paginates via `&after=t3_{last post id}` when `limit` exceeds 100
+4. Paces requests through `reddit_rate_gate()` (anonymous reddit allows ~1
+   request/minute; a 429 is retried using the `x-ratelimit-reset` hint)
+5. Calls RedGifs API v2 to get temporary auth token
+6. Resolves each gif ID to direct video URL (HD or SD fallback)
+7. Displays progress indicator during fetching
+
+Because only one feed request is needed per board (100 posts max per page),
+boards are fetched sequentially rather than concurrently.
 
 Input formats:
 - Format string: `r/subreddit:modifier:time` (e.g., `r/hotwife:top:month`)
+- User: `u/username:sort:time`
 - Full URL: `https://reddit.com/r/subreddit/modifier/?t=time`
 
 ### 4chan Integration
@@ -200,7 +219,7 @@ GitHub Actions automatically:
 
 ### API Integration Changes
 
-- **Reddit**: Uses ureq to fetch Reddit JSON, extracts RedGifs IDs with `REDGIFS_REGEX`, resolves to video URLs via RedGifs API v2
+- **Reddit**: Uses ureq against the public Atom feed (`/.rss`) and extracts RedGifs slugs with `REDGIFS_LINK_REGEX`; pagination uses `ENTRY_ID_REGEX` + `?after=`. Requests are serialized through `reddit_rate_gate()` because anonymous reddit is limited to about one request per minute. Do not reintroduce `.json`/old.reddit.com scraping without verifying they still answer — both are currently blocked for anonymous clients.
 - **4chan**: Direct API endpoint call returning thread JSON with post metadata
 - **RedGifs**: Requires temporary OAuth token (expires after session), returns HD/SD video URLs
 - Both platforms use `MediaItem { url: String }` struct for unified handling
