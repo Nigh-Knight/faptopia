@@ -506,6 +506,8 @@ iframe, video {
         scroll-snap-stop: always;
         background: var(--bg-primary);
         overflow: hidden;
+        /* keep a full-screen video's layout/paint work inside its own slide */
+        contain: layout paint;
     }
     .gallery-item video,
     .gallery-item iframe {

@@ -395,18 +395,14 @@ function rebuildAfterTabChange() {
     for (let i = 0; i < totalSections; i++) {
         const g = document.getElementById(`gallery-${i}`);
         setupFeedWrap(g);
-        attachVideoEndedListeners(g, i);
-        attachVideoResilience(g, i);
     }
     setupBoardWrap();
-    boardSections()
-        .filter(s => s.classList.contains('is-clone'))
-        .forEach(s => {
-            const g = s.querySelector('.gallery-em');
-            const idx = realBoard(s, boardSections().indexOf(s));
-            attachVideoEndedListeners(g, idx);
-            attachVideoResilience(g, idx);
-        });
+    boardSections().forEach(s => {
+        const g = s.querySelector('.gallery-em');
+        const idx = realBoard(s, boardSections().indexOf(s));
+        attachVideoEndedListeners(g, idx);
+        attachVideoResilience(g, idx);
+    });
     showSection(currentSection, { instant: true });
 }
 
@@ -517,7 +513,6 @@ function reanchorFeed(sectionIndex) {
     const delta = (real.offsetTop || 0) - (clone.offsetTop || 0);
     if (!delta) return false;
     gallery.scrollTop += delta;
-    updateVideoFocus(sectionIndex, currentIndices[sectionIndex]);
     return true;
 }
 
@@ -793,8 +788,9 @@ function attachVideoResilience(galleryOrIndex, sectionIndex) {
             st.attempts = 0;
             st.playedOnce = true;
             recordSuccess();
-            if (currentSection === secIndex && currentIndices[secIndex] === i) {
-                warmNeighbors(secIndex, i);
+            const real = realIndex(item, i);
+            if (currentSection === secIndex && currentIndices[secIndex] === real) {
+                warmNeighbors(secIndex, real);
             }
         };
         video.addEventListener('playing', video._playingHandler);
@@ -1005,11 +1001,20 @@ function pickFocusedItem(gallery, hint) {
 // currentIndices stays in real indices.
 let focusSlots = [];
 
+// isFeedScroll: ignore scrolls that aren't the active board's feed (a board
+// swipe also scrolls, and would otherwise re-run focus work every frame).
+function isFeedScroll(e) {
+    const t = e && e.target;
+    if (!t || !t.classList) return true;
+    return t.classList.contains('gallery-em') || t.classList.contains('gallery-em__track');
+}
+
 let feedRaf = 0;
-// onFeedFocus: capture-phase scroll listener drives one-at-a-time playback as
-// the user scrolls the active board's feed (rAF-throttled to one pass/frame).
-function onFeedFocus() {
-    if (!isMobile || feedRaf) return;
+// onFeedFocus: capture-phase scroll listener. Only the index bookkeeping happens
+// per frame - playback is left to onFeedSettle, so a fast fling doesn't
+// start/stop a video per item it flies past.
+function onFeedFocus(e) {
+    if (!isMobile || feedRaf || !isFeedScroll(e)) return;
     feedRaf = requestAnimationFrame(() => {
         feedRaf = 0;
         const gallery = galleryOf(currentSection);
@@ -1020,17 +1025,16 @@ function onFeedFocus() {
         const idx = realIndex(itemsOf(gallery)[slot], slot);
         if (idx === currentIndices[currentSection]) return;
         currentIndices[currentSection] = idx;
-        updateVideoFocus(currentSection, idx);
         updateProgress();
-        // Neighbor warming is triggered by the focused video's 'playing' handler.
     });
 }
 
-// onFeedSettle: once the feed stops moving, hop off a clone band and onto the
-// identical real item so the scroll can never run out of feed.
+// onFeedSettle: the scroll has stopped. Hop off a clone band and onto the
+// identical real item so the feed can never run out, then commit playback and
+// neighbour warming for whatever is centred now.
 let feedSettleTimer = 0;
-function onFeedSettle() {
-    if (!isMobile) return;
+function onFeedSettle(e) {
+    if (!isMobile || !isFeedScroll(e)) return;
     clearTimeout(feedSettleTimer);
     feedSettleTimer = setTimeout(() => {
         if (reanchorFeed(currentSection)) {
@@ -1038,6 +1042,18 @@ function onFeedSettle() {
             const slot = pickFocusedItem(gallery, focusSlots[currentSection]);
             if (slot !== null) focusSlots[currentSection] = slot;
         }
+        // Whatever the feed came to rest on is what plays now.
+        const gallery = galleryOf(currentSection);
+        if (!gallery) return;
+        const slot = pickFocusedItem(gallery, focusSlots[currentSection]);
+        if (slot === null) return;
+        focusSlots[currentSection] = slot;
+        const idx = realIndex(itemsOf(gallery)[slot], slot);
+        if (idx !== currentIndices[currentSection]) {
+            currentIndices[currentSection] = idx;
+            updateProgress();
+        }
+        updateVideoFocus(currentSection, currentIndices[currentSection]);
     }, 110);
 }
 
@@ -1129,26 +1145,28 @@ focusSlots = new Array(totalSections).fill(0);
 // ===== MOBILE SUPPORT =====
 let isMobile = window.innerWidth <= 768 || window.matchMedia('(pointer: coarse)').matches;
 
-// Attach auto-scroll ended listeners and resilience handlers for all sections
-for (let i = 0; i < totalSections; i++) {
-    attachVideoEndedListeners(document.getElementById(`gallery-${i}`), i);
-    attachVideoResilience(document.getElementById(`gallery-${i}`), i);
-}
-
 // Wrap each feed around on mobile, then clone the end boards onto the opposite
-// ends of the track. Done after the handlers are bound so the cloneNode copies
-// carry them (the clone boards get their own attachment below).
+// ends of the track, and only then bind handlers - the cloneNode copies arrive
+// without them, and every copy has to be live.
 if (isMobile) {
     for (let i = 0; i < totalSections; i++) setupFeedWrap(document.getElementById(`gallery-${i}`));
     setupBoardWrap();
-    boardSections()
-        .filter(s => s.classList.contains('is-clone'))
-        .forEach(s => {
-            const g = s.querySelector('.gallery-em');
-            const idx = realBoard(s, boardSections().indexOf(s));
-            attachVideoEndedListeners(g, idx);
-            attachVideoResilience(g, idx);
-        });
+}
+
+// Attach auto-scroll ended listeners and resilience handlers for all sections
+// (clone boards included - they each get their own gallery element).
+if (isMobile) {
+    boardSections().forEach(s => {
+        const g = s.querySelector('.gallery-em');
+        const idx = realBoard(s, boardSections().indexOf(s));
+        attachVideoEndedListeners(g, idx);
+        attachVideoResilience(g, idx);
+    });
+} else {
+    for (let i = 0; i < totalSections; i++) {
+        attachVideoEndedListeners(document.getElementById(`gallery-${i}`), i);
+        attachVideoResilience(document.getElementById(`gallery-${i}`), i);
+    }
 }
 
 
