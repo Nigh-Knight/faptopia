@@ -455,9 +455,18 @@ iframe, video {
         height: 100svh;
     }
     .board-viewport {
-        overflow: hidden;
-        touch-action: pan-y;  /* vertical panning native; horizontal drags go to Embla (board switch) */
+        /* Board axis is a native horizontal scroller with mandatory snapping:
+           a swipe always lands exactly on a board edge (Embla's transforms used
+           to settle a few pixels short, leaving the next board half-clipped). */
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x mandatory;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
+        /* both axes: vertical panning belongs to the feed, horizontal to boards */
+        touch-action: pan-x pan-y;
     }
+    .board-viewport::-webkit-scrollbar { display: none; }
     .board-track { display: flex; }
     .gallery-section,
     .gallery-section.hidden { /* hidden is desktop-only; on mobile all sections live in the track */
@@ -470,6 +479,8 @@ iframe, video {
         opacity: 1;
         transform: none;
         pointer-events: auto;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;  /* a fling advances one board, never five */
     }
     .gallery-em {
         height: 100%;
@@ -477,7 +488,7 @@ iframe, video {
         overflow-x: hidden;
         scroll-snap-type: y mandatory;
         overscroll-behavior-y: contain;
-        touch-action: pan-y;   /* nested scroller: vertical native, horizontal events bubble to Embla */
+        touch-action: pan-x pan-y;  /* vertical native; horizontal bubbles to the board axis */
         -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
     }

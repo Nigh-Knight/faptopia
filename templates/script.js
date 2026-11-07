@@ -185,13 +185,65 @@ function warmPwaVideos() {
         .catch(() => {});
 }
 
-// showSection: reveals the board at `index`. On mobile it drives the outer
-// board carousel (Embla); on desktop it toggles .hidden on sections.
-let outerEm = null;
+// ===== BOARD AXIS (mobile) =====
+// The board track is a native horizontal scroll-snap container: one board per
+// screen with mandatory snapping, so a swipe always settles exactly on a board
+// edge. It used to be driven by Embla's transforms, which stopped a few pixels
+// short of the snap and left a sliver of the neighbouring board on screen.
+let boardSettleTimer = 0;
+// Board the viewport is currently travelling to programmatically (null = the
+// user is dragging). Used so the settle handler doesn't fight a smooth scroll.
+let boardScrollTarget = null;
 
-function showSection(index) {
-    if (isMobile && outerEm) {
-        if (index !== currentSection) outerEm.scrollTo(index);
+function boardViewport() { return document.getElementById('board-viewport'); }
+
+function boardWidth() {
+    const vp = boardViewport();
+    return (vp && vp.clientWidth) || window.innerWidth;
+}
+
+// onBoardScroll: the viewport has no scrollend everywhere, so settle by timer.
+// A drag settles as soon as events stop; a programmatic scroll waits until the
+// viewport has actually arrived before the board is committed.
+function onBoardScroll() {
+    if (!isMobile) return;
+    const vp = boardViewport();
+    if (!vp) return;
+    clearTimeout(boardSettleTimer);
+    boardSettleTimer = setTimeout(() => {
+        const w = boardWidth();
+        if (boardScrollTarget !== null) {
+            if (Math.abs(vp.scrollLeft - boardScrollTarget * w) > 2) { onBoardScroll(); return; }
+            const idx = boardScrollTarget;
+            boardScrollTarget = null;
+            if (idx !== currentSection) finishSectionSwitch(idx);
+            return;
+        }
+        const idx = Math.max(0, Math.min(totalSections - 1, Math.round(vp.scrollLeft / w)));
+        if (idx !== currentSection) finishSectionSwitch(idx);
+    }, 90);
+}
+
+function initBoardAxis() {
+    const vp = boardViewport();
+    if (!vp) return;
+    vp.addEventListener('scroll', onBoardScroll, { passive: true });
+}
+
+// showSection: reveals the board at `index`. On mobile it drives the board
+// viewport; on desktop it toggles .hidden on sections.
+function showSection(index, opts) {
+    if (isMobile) {
+        const vp = boardViewport();
+        if (index !== currentSection) {
+            boardScrollTarget = index;
+            if (vp) {
+                vp.scrollTo({
+                    left: index * boardWidth(),
+                    behavior: (opts && opts.instant) ? 'instant' : 'smooth',
+                });
+            }
+        }
         finishSectionSwitch(index);
         return;
     }
@@ -231,48 +283,12 @@ function finishSectionSwitch(index) {
     updateVideoFocus(index, currentIndices[index]);
 }
 
-function initCarousels() {
-    destroyCarousels();
-    if (!isMobile || typeof EmblaCarousel === 'undefined') return;
-    const vp = document.getElementById('board-viewport');
-    if (!vp) return;
-
-    const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    const dur = reduceMotion ? 0 : 25;
-
-    // Outer Embla drives horizontal board switching only. Inside each board the
-    // `.gallery-em` is a plain native scroller (continuous vertical feed).
-    // align:'center' is the loop-blessed alignment (align:'start'+trimSnaps is a
-    // known-fragile combo for loop) and gives exact one-board snaps.
-    outerEm = EmblaCarousel(vp, {
-        axis: 'x',
-        align: 'center',
-        loop: totalSections > 1,
-        dragFree: false,
-        dragThreshold: 8,
-        startIndex: currentSection,
-        duration: dur,
-    });
-
-    outerEm.on('select', () => onOuterSelect());
-}
-
-function destroyCarousels() {
-    if (outerEm) { try { outerEm.destroy(); } catch (e) {} outerEm = null; }
-}
-
-function onOuterSelect() {
-    if (!outerEm) return;
-    const idx = outerEm.selectedScrollSnap();
-    if (idx === currentSection) return;
-    finishSectionSwitch(idx);
-}
-
 function rebuildAfterTabChange() {
-    if (isMobile) {
-        buildSwitcherMenu();
-        initCarousels();
-    }
+    if (!isMobile) return;
+    buildSwitcherMenu();
+    // A removed board shrinks the track: re-anchor before the browser clamps
+    // scrollLeft to a position that may no longer match currentSection.
+    showSection(currentSection, { instant: true });
 }
 
 // updateVideoFocus: play/unmute only the focused video in the section,
@@ -902,7 +918,7 @@ function buildSwitcherMenu() {
         btn.addEventListener('click', () => {
             const idx = parseInt(btn.dataset.index, 10);
             closeSwitcher();
-            if (!isNaN(idx)) showSection(idx);
+            if (!isNaN(idx)) showSection(idx, { instant: true });
         });
     });
 }
@@ -964,7 +980,7 @@ function wireSwitcher() {
     });
 }
 
-// Mobile-specific behavior: nested carousels + merged board switcher
+// Mobile-specific behavior: native board axis + merged board switcher
 if (isMobile) {
     // Platform accent drives the pill dot + dropdown accents
     document.documentElement.style.setProperty(
@@ -973,7 +989,7 @@ if (isMobile) {
     );
     buildSwitcherMenu();
     wireSwitcher();
-    initCarousels();
+    initBoardAxis();
 }
 
 // updateProgress: show current position as "N / Total" in the progress counter

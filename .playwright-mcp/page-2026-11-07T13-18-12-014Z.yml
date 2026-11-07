@@ -1,0 +1,14 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - button "r/hotwife ×" [ref=e3] [cursor=pointer]:
+      - generic [ref=e4]: r/hotwife
+      - generic [ref=e5]: ×
+    - link "4CHAN" [ref=e6] [cursor=pointer]:
+      - /url: faptopia_4chan.html
+  - generic: 1 / 12
+  - generic:
+    - generic: Tab closed
+    - button "Undo"
+  - link "● Local stats" [ref=e36] [cursor=pointer]:
+    - /url: faptopia_stats.html
+  - generic [ref=e37]: Z / X to navigate · ← / → to switch boards · P to toggle auto-scroll · Ctrl+S to save

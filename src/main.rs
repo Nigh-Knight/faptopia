@@ -1362,7 +1362,6 @@ fn serve_gallery(port: u16) -> io::Result<()> {
 const HTML_TEMPLATE: &str = include_str!("../templates/gallery.html");
 const CSS_TEMPLATE: &str = include_str!("../templates/styles.css");
 const JS_TEMPLATE: &str = include_str!("../templates/script.js");
-const EMBLA_TEMPLATE: &str = include_str!("../templates/embla.js");
 const STATS_TEMPLATE: &str = include_str!("../templates/stats.html");
 
 fn generate_stats_page() -> io::Result<()> {
@@ -1492,13 +1491,9 @@ fn generate_gallery(items: Vec<(String, Vec<MediaItem>)>, filename: &str) -> Str
     } else {
         "4chan"
     };
-    let script = format!(
-        "{}\n{}",
-        EMBLA_TEMPLATE,
-        JS_TEMPLATE
-            .replace("{{TOTAL_SECTIONS}}", &items.len().to_string())
-            .replace("{{PLATFORM}}", platform)
-    );
+    let script = JS_TEMPLATE
+        .replace("{{TOTAL_SECTIONS}}", &items.len().to_string())
+        .replace("{{PLATFORM}}", platform);
 
     let toggle_button = format!(
         r#"<a href="{}" class="gallery-toggle {} ">{}</a>"#,

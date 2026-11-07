@@ -1,0 +1,9 @@
+- generic [active] [ref=f2e1]:
+  - button "Switch board" [ref=f2e3] [cursor=pointer]:
+    - generic [ref=f2e5]: r/hotwife
+  - generic: 1 / 8
+  - generic:
+    - generic: Tab closed
+    - button "Undo"
+  - link "● Local stats" [ref=f2e103] [cursor=pointer]:
+    - /url: faptopia_stats.html
