@@ -137,26 +137,6 @@
             font-size: 0.6rem;
             color: var(--muted);
         }
-        /* Recent sessions */
-        .session-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 0;
-            border-bottom: 1px solid var(--border);
-            font-size: 0.8rem;
-        }
-        .session-row:last-child { border-bottom: none; }
-        .session-date { color: var(--dim); flex: 0 0 100px; }
-        .session-platform {
-            color: var(--accent);
-            font-weight: 700;
-            text-transform: uppercase;
-            font-size: 0.65rem;
-            flex: 0 0 48px;
-        }
-        .session-duration { color: var(--text); font-weight: 500; }
-        .session-videos { color: var(--dim); margin-left: auto; }
         /* Empty state */
         .empty {
             text-align: center;
@@ -188,7 +168,6 @@
         @media (max-width: 480px) {
             .stat-grid { grid-template-columns: repeat(2, 1fr); }
             .bar-label { flex: 0 0 80px; }
-            .session-date { flex: 0 0 80px; font-size: 0.72rem; }
         }
     </style>
 </head>
@@ -210,12 +189,6 @@
         if (secs < 60) return secs + 's';
         if (secs < 3600) return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
         return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
-    }
-
-    function fmtDate(ts) {
-        var d = new Date(ts);
-        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-            + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     }
 
     function fmtBytes(n) {
@@ -335,9 +308,6 @@
     }
     if (maxDay === 0) maxDay = 1;
 
-    // Recent sessions (last 10, newest first)
-    var recent = sessions.slice(-10).reverse();
-
     // Build HTML
     var html = '<h1>Faptopia Stats</h1><p class="subtitle">Your gallery usage history</p>';
 
@@ -376,19 +346,6 @@
             + '</div>';
     }
     html += '</div></div>';
-
-    // Recent sessions
-    html += '<div class="section"><div class="section-title">Recent Sessions</div>';
-    for (var i = 0; i < recent.length; i++) {
-        var s = recent[i];
-        html += '<div class="session-row">'
-            + '<span class="session-date">' + fmtDate(s.start) + '</span>'
-            + '<span class="session-platform">' + (s.platform || '?') + '</span>'
-            + '<span class="session-duration">' + fmt(s.duration || 0) + '</span>'
-            + '<span class="session-videos">' + (s.videosSeen || 0) + ' videos</span>'
-            + '</div>';
-    }
-    html += '</div>';
 
     // Clear data
     html += '<div class="section">'

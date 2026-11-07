@@ -1142,18 +1142,6 @@ const Stats = (() => {
     return { switchTab, recordNavigation, recordSave, getStats, clearData };
 })();
 
-// Update the stats indicator element with a brief summary
-function updateStatsIndicator() {
-    const el = document.getElementById('stats-indicator');
-    if (!el) return;
-    const stats = Stats.getStats();
-    const s = stats.lifetime;
-    if (s.sessions > 0) {
-        el.textContent = `● ${s.sessions} sessions`;
-    }
-}
-setTimeout(updateStatsIndicator, 1000);
-
 // Initialize the first section on load
 showSection(0);
 updateProgress();

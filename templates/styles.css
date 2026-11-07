@@ -218,38 +218,6 @@ iframe, video {
     border-color: rgba(255, 255, 255, 0.15);
 }
 
-/* ===== STATS INDICATOR ===== */
-.stats-indicator {
-    position: fixed;
-    bottom: 58px;
-    right: 14px;
-    z-index: 600;
-    background: rgba(10, 10, 10, 0.7);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    color: var(--text-muted);
-    font-family: var(--font-family);
-    font-size: 0.65rem;
-    font-weight: 500;
-    padding: 3px 10px;
-    border-radius: 12px;
-    border: 1px solid var(--border-subtle);
-    pointer-events: auto;
-    transition: opacity var(--transition-fast);
-    text-decoration: none;
-}
-.stats-indicator:hover {
-    color: var(--text-secondary);
-    border-color: rgba(255, 255, 255, 0.1);
-}
-
-@media (max-width: 768px), (pointer: coarse) {
-    .stats-indicator {
-        bottom: calc(var(--safe-bottom) + 8px);
-        right: 10px;
-    }
-}
-
 /* ===== DESKTOP NAV HINT ===== */
 .nav-hint {
     position: fixed;
