@@ -31,7 +31,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Templates are embedded at compile-time using `include_str!()` macros and rendered with `{{PLACEHOLDER}}` string substitution:
 
 - **templates/gallery.html** - HTML scaffold with tab navigation and video containers
-- **templates/styles.css** - Dark theme with horizontal scroll-snap gallery
+- **templates/styles.css** - Dark theme; desktop is a horizontal scroll-snap strip, mobile is a hand-off between a horizontal board scroller and per-board vertical feeds
 - **templates/script.js** - Client-side interactivity:
   - Tab management (create, switch, close tabs)
   - Keyboard controls (Z/X/C for navigation)
@@ -44,6 +44,9 @@ Templates are embedded at compile-time using `include_str!()` macros and rendere
     - Burst circuit breaker: 3 failures within 30s enters throttle mode (3x backoff, preloading paused, toast shown); recovers automatically
     - Manual Retry overlay restores the original HD source for a clean slate
   - **Paced neighbor preloading**: while the focused video plays, its neighbors (wrap-around, so reverse navigation from first -> last stays warm) are warmed one at a time via `preload="auto"` (strictly 1 fetch in flight; the old eager preloader saturated the single HTTP/2 connection and was removed). Direction-aware — next warms first when going forward, prev first when going back — and the frontier extends a few videos ahead while the user lingers on a video
+  - **Infinite mobile feed**: each board feed (and the board track itself) has a page of items cloned onto both ends. Clones carry `data-real`; `realIndex()` / `itemByReal()` / `nearestItemByReal()` / `galleryOf()` / `realCount()` resolve between real indices and the element that is on screen, so playback, warm-ahead, progress, save and keyboard wrap all stay in real indices. Once a scroll settles on a clone, `reanchorFeed()` / `reanchorBoard()` jump the identical real twin to the same offset instantly — the feed/track can never run out and the seam is invisible. Never index `.gallery-item` / `.gallery-section` positionally; go through those helpers
+  - **Native, not library-driven**: boards are a plain horizontal scroll container with `scroll-snap-type: x mandatory` + `scroll-snap-stop: always`; a settle timer (90ms) commits the board only once the viewport has arrived. Embla was unvendored — its transform settle stopped a few px short and left the next board clipped
+  - **Playback commits on settle, not per frame**: `onFeedFocus` only advances the index/progress; `onFeedSettle` (110ms after the last scroll event) plays the centred video and starts neighbour warming, so a fling is one `play()` rather than one per item
   - Behavior verified by `tests/script_resilience.test.js` (node harness that evals the template with DOM stubs; run with `node tests/script_resilience.test.js`)
 
 ### Data Flow
