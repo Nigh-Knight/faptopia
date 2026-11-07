@@ -3,7 +3,7 @@
 // Run with: node tests/script_resilience.test.js
 const fs = require('fs');
 const path = require('path');
-const code = fs.readFileSync(path.join(__dirname, '..', 'templates', 'script.js'), 'utf8');
+const code = fs.readFileSync(path.join(__dirname, '..', 'templates', process.env.SC || 'script.js'), 'utf8');
 
 // ---- timer capture (we drive retries/stalls/grace manually) ----
 const timers = [];

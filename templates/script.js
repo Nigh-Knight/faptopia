@@ -40,7 +40,11 @@ function showUndoToast(text) {
 function closeTab(event, sectionIndex) {
     // Prevent event bubbling
     event.stopPropagation();
-    
+
+    // Board clones sit at both ends of the track and would shift every index
+    const cloneBoards = isMobile;
+    if (cloneBoards) teardownBoardWrap();
+
     const allTabs = document.querySelectorAll('.tab-button');
     const allSections = document.querySelectorAll('.gallery-section');
     
@@ -81,6 +85,7 @@ function closeTab(event, sectionIndex) {
     // Register undo for the toast
     _undoStack = {
         undo: function() {
+            if (cloneBoards) teardownBoardWrap();
             const tabsContainer = document.querySelector('.tabs');
             const sectionsContainer = document.querySelector('.gallery-section')?.parentElement;
             if (!tabsContainer || !sectionsContainer) return;
@@ -107,9 +112,6 @@ function closeTab(event, sectionIndex) {
             
             reindexTabsAndSections();
             rebuildAfterTabChange();
-            // Re-attach handlers to the restored (freshly cloned) videos
-            attachVideoEndedListeners(sectionIndex);
-            attachVideoResilience(sectionIndex);
             showSection(currentSection);
             updateProgress();
         }
@@ -149,7 +151,7 @@ function collectWarmVideoIds(limit = PREFETCH_LIMIT) {
         ids.push(id);
     };
 
-    const currentGallery = document.getElementById(`gallery-${currentSection}`);
+    const currentGallery = galleryOf(currentSection);
     if (currentGallery) {
         const items = Array.from(currentGallery.querySelectorAll('.gallery-item'))
             .filter(el => !el.classList.contains('is-clone'));
@@ -164,7 +166,7 @@ function collectWarmVideoIds(limit = PREFETCH_LIMIT) {
     }
 
     for (let offset = 1; offset < totalSections && ids.length < limit; offset++) {
-        const gallery = document.getElementById(`gallery-${(currentSection + offset) % totalSections}`);
+        const gallery = galleryOf((currentSection + offset) % totalSections);
         if (!gallery) continue;
         const video = gallery.querySelector('.gallery-item video[data-gif-id]');
         pushId(video && video.dataset.gifId);
@@ -192,15 +194,92 @@ function warmPwaVideos() {
 // edge. It used to be driven by Embla's transforms, which stopped a few pixels
 // short of the snap and left a sliver of the neighbouring board on screen.
 let boardSettleTimer = 0;
-// Board the viewport is currently travelling to programmatically (null = the
-// user is dragging). Used so the settle handler doesn't fight a smooth scroll.
+// Where the viewport is being sent programmatically and which board that is
+// (null target = the user is dragging). Keeps the settle handler from fighting
+// a smooth scroll and lets galleryOf() resolve the arriving copy.
+let boardScrollLeft = null;
 let boardScrollTarget = null;
+let boardScrollTries = 0;
 
 function boardViewport() { return document.getElementById('board-viewport'); }
 
 function boardWidth() {
     const vp = boardViewport();
     return (vp && vp.clientWidth) || window.innerWidth;
+}
+
+// ===== BOARD WRAP =====
+// The first and last board are cloned onto the opposite ends of the track, so
+// swiping off either end continues into the other end instead of dead-stopping.
+// Board indices stay real: a clone carries data-real, and every lookup that
+// cares about what is on screen resolves through galleryOf().
+function boardSections() { return Array.from(document.querySelectorAll('.gallery-section')); }
+function realSections() { return boardSections().filter(s => !s.classList.contains('is-clone')); }
+
+function realBoard(el, slot) {
+    const r = el && el.dataset ? el.dataset.real : null;
+    return r == null ? slot : parseInt(r, 10);
+}
+
+// galleryOf: the feed element for board `index` — the on-screen copy when the
+// board is cloned, otherwise the canonical one.
+function galleryOf(index) {
+    const matches = boardSections().filter((s, i) => realBoard(s, i) === index);
+    if (!matches.length) return document.getElementById(`gallery-${index}`);
+    if (matches.length === 1) return matches[0].querySelector('.gallery-em');
+    const vp = boardViewport();
+    if (!vp) return matches[0].querySelector('.gallery-em');
+    const mid = (boardScrollLeft !== null ? boardScrollLeft : vp.scrollLeft)
+        + vp.clientWidth / 2;
+    let best = matches[0], bestDist = Infinity;
+    for (const s of matches) {
+        const r = s.getBoundingClientRect();
+        const d = Math.abs(r.left + r.width / 2 - mid);
+        if (d < bestDist) { bestDist = d; best = s; }
+    }
+    return best.querySelector('.gallery-em');
+}
+
+function boardOffset(el) {
+    const vp = boardViewport();
+    if (!vp) return 0;
+    return el.getBoundingClientRect().left - vp.getBoundingClientRect().left + vp.scrollLeft;
+}
+
+function setupBoardWrap() {
+    const track = document.getElementById('board-track');
+    const secs = boardSections();
+    if (!isMobile || !track || secs.length < 2 || track.querySelector('.gallery-section.is-clone')) return;
+    secs.forEach((el, i) => { el.dataset.real = i; });
+    const clone = (el) => {
+        const c = el.cloneNode(true);
+        c.classList.add('is-clone');
+        c.dataset.real = el.dataset.real;
+        const g = c.querySelector('.gallery-em');
+        if (g) g.id = `gallery-${el.dataset.real}-c`;
+        return c;
+    };
+    track.insertBefore(clone(secs[secs.length - 1]), secs[0]);
+    track.appendChild(clone(secs[0]));
+}
+
+function teardownBoardWrap() {
+    boardSections().filter(s => s.classList.contains('is-clone')).forEach(s => s.remove());
+    boardSections().forEach(s => { delete s.dataset.real; });
+}
+
+// reanchorBoard: the user settled on a cloned board. Carry the feed position
+// over to the real board and jump the viewport there in one instant step.
+function reanchorBoard(realIndex, cloneSection) {
+    const vp = boardViewport();
+    const target = realSections()[realIndex];
+    if (!vp || !target) return false;
+    const from = cloneSection.querySelector('.gallery-em');
+    const to = target.querySelector('.gallery-em');
+    if (from && to) to.scrollTop = from.scrollTop;
+    vp.scrollLeft = boardOffset(target);
+    finishSectionSwitch(realIndex);
+    return true;
 }
 
 // onBoardScroll: the viewport has no scrollend everywhere, so settle by timer.
@@ -214,13 +293,29 @@ function onBoardScroll() {
     boardSettleTimer = setTimeout(() => {
         const w = boardWidth();
         if (boardScrollTarget !== null) {
-            if (Math.abs(vp.scrollLeft - boardScrollTarget * w) > 2) { onBoardScroll(); return; }
+            const want = boardScrollLeft;
+            if (Math.abs(vp.scrollLeft - want) > 2) {
+                // Still travelling. scroll-snap-stop can stop a smooth scroll at
+                // an intermediate board, so bail out to a jump if it never lands.
+                if (++boardScrollTries > 20) vp.scrollLeft = want;
+                else { onBoardScroll(); return; }
+            }
             const idx = boardScrollTarget;
             boardScrollTarget = null;
+            boardScrollLeft = null;
+            boardScrollTries = 0;
             if (idx !== currentSection) finishSectionSwitch(idx);
             return;
         }
-        const idx = Math.max(0, Math.min(totalSections - 1, Math.round(vp.scrollLeft / w)));
+        const secs = boardSections();
+        const slot = Math.max(0, Math.min(secs.length - 1, Math.round(vp.scrollLeft / w)));
+        const sec = secs[slot];
+        if (!sec) return;
+        if (sec.classList.contains('is-clone')) {
+            reanchorBoard(realBoard(sec, slot), sec);
+            return;
+        }
+        const idx = realBoard(sec, slot);
         if (idx !== currentSection) finishSectionSwitch(idx);
     }, 90);
 }
@@ -236,13 +331,20 @@ function initBoardAxis() {
 function showSection(index, opts) {
     if (isMobile) {
         const vp = boardViewport();
-        if (index !== currentSection) {
-            boardScrollTarget = index;
-            if (vp) {
+        const target = realSections()[index];
+        if (vp && target) {
+            const off = boardOffset(target);
+            if (Math.abs(vp.scrollLeft - off) > 2) {
+                boardScrollTarget = index;
+                boardScrollLeft = off;
+                boardScrollTries = 0;
                 vp.scrollTo({
-                    left: index * boardWidth(),
+                    left: off,
                     behavior: (opts && opts.instant) ? 'instant' : 'smooth',
                 });
+            } else {
+                boardScrollTarget = null;
+                boardScrollLeft = null;
             }
         }
         finishSectionSwitch(index);
@@ -252,7 +354,7 @@ function showSection(index, opts) {
     document.querySelectorAll('.gallery-section').forEach(s => s.classList.add('hidden'));
     const sec = document.querySelector(`[data-section="${index}"]`);
     if (sec) sec.classList.remove('hidden');
-    const gallery = document.getElementById(`gallery-${index}`);
+    const gallery = galleryOf(index);
     if (gallery) gallery.scrollTo({ left: (currentIndices[index] || 0) * window.innerWidth, behavior: 'instant' });
     finishSectionSwitch(index);
 }
@@ -287,8 +389,24 @@ function finishSectionSwitch(index) {
 function rebuildAfterTabChange() {
     if (!isMobile) return;
     buildSwitcherMenu();
-    // A removed board shrinks the track: re-anchor before the browser clamps
+    // The tab set changed: re-establish the wraps and their handlers, then
+    // re-anchor — a removed board shifts the track and the browser clamps
     // scrollLeft to a position that may no longer match currentSection.
+    for (let i = 0; i < totalSections; i++) {
+        const g = document.getElementById(`gallery-${i}`);
+        setupFeedWrap(g);
+        attachVideoEndedListeners(g, i);
+        attachVideoResilience(g, i);
+    }
+    setupBoardWrap();
+    boardSections()
+        .filter(s => s.classList.contains('is-clone'))
+        .forEach(s => {
+            const g = s.querySelector('.gallery-em');
+            const idx = realBoard(s, boardSections().indexOf(s));
+            attachVideoEndedListeners(g, idx);
+            attachVideoResilience(g, idx);
+        });
     showSection(currentSection, { instant: true });
 }
 
@@ -378,7 +496,7 @@ function setupFeedWrap(gallery) {
 // the same screen position in a single instant jump. Nothing is animated, so it
 // reads as one continuous feed rather than a wrap.
 function reanchorFeed(sectionIndex) {
-    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const gallery = galleryOf(sectionIndex);
     if (!gallery) return false;
     const items = Array.from(itemsOf(gallery));
     if (!items.length) return false;
@@ -406,7 +524,7 @@ function reanchorFeed(sectionIndex) {
 // updateVideoFocus: play/unmute only the focused video in the section,
 // pause and mute other videos to avoid multiple audio streams.
 function updateVideoFocus(sectionIndex, itemIndex) {
-    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const gallery = galleryOf(sectionIndex);
     const target = gallery ? (itemByReal(gallery, itemIndex) || {}) : {};
     const targetVideo = target.querySelector ? target.querySelector('video') : null;
     const videos = document.querySelectorAll(`#gallery-${sectionIndex} video`);
@@ -615,8 +733,13 @@ function showVideoOverlay(video, item) {
 
 // attachVideoResilience: error auto-retry, cold-start stall watchdog, and
 // neighbor-warming hooks for every video in a section.
-function attachVideoResilience(sectionIndex) {
-    const items = document.querySelectorAll(`#gallery-${sectionIndex} .gallery-item`);
+function attachVideoResilience(galleryOrIndex, sectionIndex) {
+    const secIndex = typeof galleryOrIndex === 'number' ? galleryOrIndex : sectionIndex;
+    const gallery = (galleryOrIndex && galleryOrIndex.querySelectorAll)
+        ? galleryOrIndex
+        : document.getElementById(`gallery-${secIndex}`);
+    if (!gallery) return;
+    const items = gallery.querySelectorAll('.gallery-item');
     items.forEach((item, i) => {
         const video = item.querySelector('video');
         if (!video) return;
@@ -670,8 +793,8 @@ function attachVideoResilience(sectionIndex) {
             st.attempts = 0;
             st.playedOnce = true;
             recordSuccess();
-            if (currentSection === sectionIndex && currentIndices[sectionIndex] === i) {
-                warmNeighbors(sectionIndex, i);
+            if (currentSection === secIndex && currentIndices[secIndex] === i) {
+                warmNeighbors(secIndex, i);
             }
         };
         video.addEventListener('playing', video._playingHandler);
@@ -696,7 +819,7 @@ let warmFocus = null;
 let warmDepth = 0;
 
 function getVideoAt(sectionIndex, itemIndex) {
-    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const gallery = galleryOf(sectionIndex);
     if (!gallery) return null;
     const item = itemByReal(gallery, itemIndex);
     return item ? item.querySelector('video') : null;
@@ -704,7 +827,7 @@ function getVideoAt(sectionIndex, itemIndex) {
 
 function warmNeighbors(sectionIndex, itemIndex) {
     if (throttleMode || document.hidden) return;
-    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const gallery = galleryOf(sectionIndex);
     if (!gallery) return;
     const total = realCount(gallery);
     if (total < 2) return;
@@ -738,7 +861,7 @@ function extendWarmFrontier() {
         return;
     }
     if (warmDepth >= WARM_FRONTIER) return;
-    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const gallery = galleryOf(sectionIndex);
     if (!gallery) return;
     const total = realCount(gallery);
     if (total < 2) return;
@@ -791,13 +914,20 @@ function pumpWarmQueue() {
 }
 
 // attachVideoEndedListeners: wire up 'ended' events on all videos in a section.
-function attachVideoEndedListeners(sectionIndex) {
-    const videos = document.querySelectorAll(`#gallery-${sectionIndex} video`);
+function attachVideoEndedListeners(galleryOrIndex, sectionIndex) {
+    const secIndex = typeof galleryOrIndex === 'number' ? galleryOrIndex : sectionIndex;
+    const gallery = (galleryOrIndex && galleryOrIndex.querySelectorAll)
+        ? galleryOrIndex
+        : document.getElementById(`gallery-${secIndex}`);
+    if (!gallery) return;
+    const videos = gallery.querySelectorAll('video');
     videos.forEach((video, i) => {
         // Remove any previous listener to avoid duplicates
         video.removeEventListener('ended', video._autoScrollHandler);
         video._autoScrollHandler = () => {
-            if (autoScroll && currentSection === sectionIndex && currentIndices[sectionIndex] === i) {
+            const el = video.closest ? video.closest('.gallery-item') : null;
+            const idx = realIndex(el, i);
+            if (autoScroll && currentSection === secIndex && currentIndices[secIndex] === idx) {
                 handleNavigation('forward');
             }
         };
@@ -807,7 +937,7 @@ function attachVideoEndedListeners(sectionIndex) {
 
 // scrollToIndex: scrolls the given section to item `index` and updates remembered index + focus.
 function scrollToIndex(sectionIndex, index) {
-    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const gallery = galleryOf(sectionIndex);
     if (!gallery) return;
     gallery.scrollTo({
         left: index * window.innerWidth,
@@ -827,7 +957,7 @@ function scrollToIndex(sectionIndex, index) {
 // scroll the currently focused item to the viewport center; the scroll handler
 // (onFeedScroll) keeps the focused index / progress / playback in sync.
 function scrollFeedItemTo(sectionIndex, itemIndex, behavior) {
-    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const gallery = galleryOf(sectionIndex);
     if (!gallery) return;
     const item = nearestItemByReal(gallery, itemIndex);
     if (!item) return;
@@ -882,7 +1012,7 @@ function onFeedFocus() {
     if (!isMobile || feedRaf) return;
     feedRaf = requestAnimationFrame(() => {
         feedRaf = 0;
-        const gallery = document.getElementById(`gallery-${currentSection}`);
+        const gallery = galleryOf(currentSection);
         if (!gallery) return;
         const slot = pickFocusedItem(gallery, focusSlots[currentSection]);
         if (slot === null) return;
@@ -904,7 +1034,7 @@ function onFeedSettle() {
     clearTimeout(feedSettleTimer);
     feedSettleTimer = setTimeout(() => {
         if (reanchorFeed(currentSection)) {
-            const gallery = document.getElementById(`gallery-${currentSection}`);
+            const gallery = galleryOf(currentSection);
             const slot = pickFocusedItem(gallery, focusSlots[currentSection]);
             if (slot !== null) focusSlots[currentSection] = slot;
         }
@@ -918,7 +1048,7 @@ function handleNavigation(direction) {
     Stats.recordNavigation();
     navDirection = direction;
     if (isMobile) {
-        const gallery = document.getElementById(`gallery-${currentSection}`);
+        const gallery = galleryOf(currentSection);
         if (!gallery) return;
         const items = gallery.querySelectorAll('.gallery-item');
         const totalItems = realCount(gallery);
@@ -930,7 +1060,7 @@ function handleNavigation(direction) {
         scrollFeedItemTo(currentSection, newIndex, 'smooth');
         return;
     }
-    const gallery = document.getElementById(`gallery-${currentSection}`);
+    const gallery = galleryOf(currentSection);
     if (!gallery) return;
     const items = gallery.querySelectorAll('.gallery-item');
     const totalItems = items.length;
@@ -953,7 +1083,7 @@ function switchBoard(dir) {
 // saveCurrentVideo: downloads the currently focused video to disk
 function saveCurrentVideo() {
     Stats.recordSave();
-    const gallery = document.getElementById(`gallery-${currentSection}`);
+    const gallery = galleryOf(currentSection);
     if (!gallery) return;
     const item = itemByReal(gallery, currentIndices[currentSection]);
     if (!item) return;
@@ -999,15 +1129,26 @@ focusSlots = new Array(totalSections).fill(0);
 // ===== MOBILE SUPPORT =====
 let isMobile = window.innerWidth <= 768 || window.matchMedia('(pointer: coarse)').matches;
 
-// Wrap every feed around before handlers are attached, so clones are live too.
-if (isMobile) {
-    for (let i = 0; i < totalSections; i++) setupFeedWrap(document.getElementById(`gallery-${i}`));
-}
-
 // Attach auto-scroll ended listeners and resilience handlers for all sections
 for (let i = 0; i < totalSections; i++) {
-    attachVideoEndedListeners(i);
-    attachVideoResilience(i);
+    attachVideoEndedListeners(document.getElementById(`gallery-${i}`), i);
+    attachVideoResilience(document.getElementById(`gallery-${i}`), i);
+}
+
+// Wrap each feed around on mobile, then clone the end boards onto the opposite
+// ends of the track. Done after the handlers are bound so the cloneNode copies
+// carry them (the clone boards get their own attachment below).
+if (isMobile) {
+    for (let i = 0; i < totalSections; i++) setupFeedWrap(document.getElementById(`gallery-${i}`));
+    setupBoardWrap();
+    boardSections()
+        .filter(s => s.classList.contains('is-clone'))
+        .forEach(s => {
+            const g = s.querySelector('.gallery-em');
+            const idx = realBoard(s, boardSections().indexOf(s));
+            attachVideoEndedListeners(g, idx);
+            attachVideoResilience(g, idx);
+        });
 }
 
 
@@ -1140,7 +1281,7 @@ if (isMobile) {
 function updateProgress() {
     const el = document.getElementById('progress-counter');
     if (!el) return;
-    const gallery = document.getElementById('gallery-' + currentSection);
+    const gallery = galleryOf(currentSection);
     if (!gallery) return;
     const total = realCount(gallery);
     if (!total) return;
