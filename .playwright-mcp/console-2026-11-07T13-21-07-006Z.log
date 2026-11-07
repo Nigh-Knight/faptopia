@@ -16,3 +16,18 @@
 [  164844ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:8787/manifest.json:0
 [  164845ms] [ERROR] Manifest fetch from http://127.0.0.1:8787/manifest.json failed, code 404 @ http://127.0.0.1:8787/faptopia_reddit.html:0
 [  164845ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  276046ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:8787/manifest.json:0
+[  276046ms] [ERROR] Manifest fetch from http://127.0.0.1:8787/manifest.json failed, code 404 @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  276047ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  284922ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:8787/manifest.json:0
+[  284923ms] [ERROR] Manifest fetch from http://127.0.0.1:8787/manifest.json failed, code 404 @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  284923ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  308727ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:8787/manifest.json:0
+[  308728ms] [ERROR] Manifest fetch from http://127.0.0.1:8787/manifest.json failed, code 404 @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  308728ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  325756ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:8787/manifest.json:0
+[  325757ms] [ERROR] Manifest fetch from http://127.0.0.1:8787/manifest.json failed, code 404 @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  325757ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  342448ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:8787/manifest.json:0
+[  342448ms] [ERROR] Manifest fetch from http://127.0.0.1:8787/manifest.json failed, code 404 @ http://127.0.0.1:8787/faptopia_reddit.html:0
+[  342457ms] [WARNING] <meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta name="mobile-web-app-capable" content="yes"> @ http://127.0.0.1:8787/faptopia_reddit.html:0

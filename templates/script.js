@@ -151,7 +151,8 @@ function collectWarmVideoIds(limit = PREFETCH_LIMIT) {
 
     const currentGallery = document.getElementById(`gallery-${currentSection}`);
     if (currentGallery) {
-        const items = currentGallery.querySelectorAll('.gallery-item');
+        const items = Array.from(currentGallery.querySelectorAll('.gallery-item'))
+            .filter(el => !el.classList.contains('is-clone'));
         const total = items.length;
         const center = currentIndices[currentSection] || 0;
         [0, 1, -1, 2, -2, 3, -3].forEach((offset) => {
@@ -291,12 +292,126 @@ function rebuildAfterTabChange() {
     showSection(currentSection, { instant: true });
 }
 
+// ===== FEED ITEM LOOKUP =====
+// Board feeds wrap around: a page of items is cloned onto both ends of every
+// feed so scrolling past the first item continues into the last (and the other
+// way round) with no seam. Clones carry .is-clone and the data-real index of
+// the item they mirror, so every real index keeps exactly one canonical
+// element and one nearest element.
+const WRAP_ITEMS = 6;
+
+function itemsOf(gallery) { return gallery.querySelectorAll('.gallery-item'); }
+
+function realCount(gallery) {
+    if (!gallery) return 0;
+    const clones = gallery.querySelectorAll('.gallery-item.is-clone');
+    return itemsOf(gallery).length - clones.length;
+}
+
+function realIndex(el, slot) {
+    const r = el && el.dataset ? el.dataset.real : null;
+    return r == null ? slot : parseInt(r, 10);
+}
+
+// measure: an item's box, falling back to its video (heights can live on either).
+function measure(el) {
+    const own = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    if (own && own.height) return own;
+    const v = el.querySelector ? el.querySelector('video') : null;
+    return (v && v.getBoundingClientRect) ? v.getBoundingClientRect() : null;
+}
+
+// itemByReal: the canonical (non-clone) element for a real index.
+function itemByReal(gallery, realIndex_) {
+    if (!gallery) return null;
+    const sel = '.gallery-item[data-real="' + realIndex_ + '"]';
+    const hit = gallery.querySelector ? gallery.querySelector(sel + ':not(.is-clone)') : null;
+    if (hit) return hit;
+    const any = gallery.querySelector ? gallery.querySelector(sel) : null;
+    return any || itemsOf(gallery)[realIndex_] || null;
+}
+
+// nearestItemByReal: the copy of a real index closest to the current scroll
+// position, so wrap navigation lands one item away instead of jumping the board.
+function nearestItemByReal(gallery, realIndex_) {
+    if (!gallery) return null;
+    const matches = gallery.querySelector
+        ? Array.from(gallery.querySelectorAll('.gallery-item[data-real="' + realIndex_ + '"]'))
+        : [];
+    if (!matches.length) return itemsOf(gallery)[realIndex_] || null;
+    const at = gallery.scrollTop || 0;
+    let best = matches[0], bestDist = Infinity;
+    for (const m of matches) {
+        const d = Math.abs((m.offsetTop || 0) - at);
+        if (d < bestDist) { bestDist = d; best = m; }
+    }
+    return best;
+}
+
+// setupFeedWrap: clone the first and last page of a feed onto the opposite ends.
+function setupFeedWrap(gallery) {
+    if (!isMobile || !gallery || gallery.querySelector('.is-clone')) return;
+    const items = Array.from(itemsOf(gallery));
+    if (items.length < 2) return;
+    const wrap = Math.min(WRAP_ITEMS, items.length);
+    items.forEach((el, i) => { el.dataset.real = i; });
+
+    const track = gallery.querySelector('.gallery-em__track') || gallery;
+    const clone = (el) => {
+        const c = el.cloneNode(true);
+        c.classList.add('is-clone');
+        c.dataset.real = el.dataset.real;
+        c.removeAttribute('data-index');
+        c.querySelectorAll('video').forEach(v => {
+            v.removeAttribute('autoplay');
+            v.setAttribute('preload', 'none');
+        });
+        return c;
+    };
+    // Head clones are the tail items, in order, before the first real item
+    items.slice(-wrap).forEach(el => track.insertBefore(clone(el), items[0]));
+    // Tail clones are the head items, in order, after the last real item
+    items.slice(0, wrap).forEach(el => track.appendChild(clone(el)));
+}
+
+// reanchorFeed: the user settled on a clone, so snap the identical real item to
+// the same screen position in a single instant jump. Nothing is animated, so it
+// reads as one continuous feed rather than a wrap.
+function reanchorFeed(sectionIndex) {
+    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    if (!gallery) return false;
+    const items = Array.from(itemsOf(gallery));
+    if (!items.length) return false;
+    const rect = gallery.getBoundingClientRect();
+    const middle = rect.top + rect.height / 2;
+    // Find the clone actually on screen and nearest the viewport middle
+    let clone = null, bestDist = Infinity;
+    for (const el of items) {
+        if (!el.classList.contains('is-clone')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.bottom <= rect.top || r.top >= rect.bottom) continue;
+        const d = Math.abs((r.top + r.height / 2) - middle);
+        if (d < bestDist) { bestDist = d; clone = el; }
+    }
+    if (!clone) return false;
+    const real = itemByReal(gallery, clone.dataset.real);
+    if (!real) return false;
+    const delta = (real.offsetTop || 0) - (clone.offsetTop || 0);
+    if (!delta) return false;
+    gallery.scrollTop += delta;
+    updateVideoFocus(sectionIndex, currentIndices[sectionIndex]);
+    return true;
+}
+
 // updateVideoFocus: play/unmute only the focused video in the section,
 // pause and mute other videos to avoid multiple audio streams.
 function updateVideoFocus(sectionIndex, itemIndex) {
+    const gallery = document.getElementById(`gallery-${sectionIndex}`);
+    const target = gallery ? (itemByReal(gallery, itemIndex) || {}) : {};
+    const targetVideo = target.querySelector ? target.querySelector('video') : null;
     const videos = document.querySelectorAll(`#gallery-${sectionIndex} video`);
-    videos.forEach((video, i) => {
-        if (i === itemIndex) {
+    videos.forEach(video => {
+        if (video === targetVideo) {
             // Play muted first so autoplay policies allow it; unmute only once
             // playback is actually running (avoids the "autoplay prevented" error
             // on iOS/Android where unmuted programmatic play is blocked).
@@ -474,8 +589,9 @@ function retryPlayback(video, item) {
             const gallery = video.closest('.gallery-em');
             if (gi && gallery) {
                 const sectionIndex = parseInt(gallery.id.replace('gallery-', ''));
-                const idx = Array.from(gallery.querySelectorAll('.gallery-item')).indexOf(gi);
-                if (sectionIndex === currentSection && idx === currentIndices[currentSection]) {
+        const items = gallery.querySelectorAll('.gallery-item');
+        const slot = Array.from(items).indexOf(gi);
+                if (sectionIndex === currentSection && realIndex(gi, slot) === currentIndices[currentSection]) {
                     video.muted = false;
                 }
             }
@@ -582,8 +698,7 @@ let warmDepth = 0;
 function getVideoAt(sectionIndex, itemIndex) {
     const gallery = document.getElementById(`gallery-${sectionIndex}`);
     if (!gallery) return null;
-    const items = gallery.querySelectorAll('.gallery-item');
-    const item = items[itemIndex];
+    const item = itemByReal(gallery, itemIndex);
     return item ? item.querySelector('video') : null;
 }
 
@@ -591,7 +706,7 @@ function warmNeighbors(sectionIndex, itemIndex) {
     if (throttleMode || document.hidden) return;
     const gallery = document.getElementById(`gallery-${sectionIndex}`);
     if (!gallery) return;
-    const total = gallery.querySelectorAll('.gallery-item').length;
+    const total = realCount(gallery);
     if (total < 2) return;
     const key = sectionIndex + '-' + itemIndex;
     if (warmFocus !== key) { warmFocus = key; warmDepth = 0; }
@@ -625,7 +740,7 @@ function extendWarmFrontier() {
     if (warmDepth >= WARM_FRONTIER) return;
     const gallery = document.getElementById(`gallery-${sectionIndex}`);
     if (!gallery) return;
-    const total = gallery.querySelectorAll('.gallery-item').length;
+    const total = realCount(gallery);
     if (total < 2) return;
     warmDepth++;
     const step = navDirection === 'back' ? -warmDepth : warmDepth;
@@ -714,8 +829,10 @@ function scrollToIndex(sectionIndex, index) {
 function scrollFeedItemTo(sectionIndex, itemIndex, behavior) {
     const gallery = document.getElementById(`gallery-${sectionIndex}`);
     if (!gallery) return;
-    const item = gallery.querySelectorAll('.gallery-item')[itemIndex];
+    const item = nearestItemByReal(gallery, itemIndex);
     if (!item) return;
+    // Keep the focus hint on the copy we are travelling to, not a stale slot.
+    focusSlots[sectionIndex] = Array.prototype.indexOf.call(itemsOf(gallery), item);
     if (typeof item.scrollIntoView !== 'function') return;
     const smooth = behavior !== 'instant';
     try {
@@ -727,15 +844,14 @@ function scrollFeedItemTo(sectionIndex, itemIndex, behavior) {
 
 // pickFocusedItem: the video nearest the feed's vertical center is the one that
 // autoplays with sound (single-stream, like desktop); everything else stays muted.
-// Scans a small window around `hint` (the last focused item) so fast scrolling
-// stays O(window) instead of O(total) per frame. Focus moves continuously, so the
-// next focus is always near the previous one.
+// Scans a small window around `hint` (the last focused DOM slot) so fast
+// scrolling stays O(window) instead of O(total) per frame. Returns a DOM slot.
 function pickFocusedItem(gallery, hint) {
     const rect = gallery.getBoundingClientRect();
     if (!rect || !rect.height) return null;
     const middle = rect.top + rect.height / 2;
-    const videos = gallery.querySelectorAll('.gallery-item video');
-    const total = videos.length;
+    const items = itemsOf(gallery);
+    const total = items.length;
     if (!total) return null;
 
     const center = (hint != null && hint >= 0 && hint < total) ? hint : 0;
@@ -745,7 +861,7 @@ function pickFocusedItem(gallery, hint) {
         const candidates = d === 0 ? [center] : [center - d, center + d];
         for (const i of candidates) {
             if (i < 0 || i >= total) continue;
-            const r = videos[i].getBoundingClientRect();
+            const r = measure(items[i]);
             if (!r || r.bottom <= rect.top || r.top >= rect.bottom) continue; // off-screen
             const c = r.top + r.height / 2;
             const dist = Math.abs(c - middle);
@@ -754,6 +870,10 @@ function pickFocusedItem(gallery, hint) {
     }
     return best;
 }
+
+// Focus is tracked by DOM slot (clones make slots non-1:1 with real indices);
+// currentIndices stays in real indices.
+let focusSlots = [];
 
 let feedRaf = 0;
 // onFeedFocus: capture-phase scroll listener drives one-at-a-time playback as
@@ -764,8 +884,11 @@ function onFeedFocus() {
         feedRaf = 0;
         const gallery = document.getElementById(`gallery-${currentSection}`);
         if (!gallery) return;
-        const idx = pickFocusedItem(gallery, currentIndices[currentSection]);
-        if (idx === null || idx === currentIndices[currentSection]) return;
+        const slot = pickFocusedItem(gallery, focusSlots[currentSection]);
+        if (slot === null) return;
+        focusSlots[currentSection] = slot;
+        const idx = realIndex(itemsOf(gallery)[slot], slot);
+        if (idx === currentIndices[currentSection]) return;
         currentIndices[currentSection] = idx;
         updateVideoFocus(currentSection, idx);
         updateProgress();
@@ -773,7 +896,23 @@ function onFeedFocus() {
     });
 }
 
+// onFeedSettle: once the feed stops moving, hop off a clone band and onto the
+// identical real item so the scroll can never run out of feed.
+let feedSettleTimer = 0;
+function onFeedSettle() {
+    if (!isMobile) return;
+    clearTimeout(feedSettleTimer);
+    feedSettleTimer = setTimeout(() => {
+        if (reanchorFeed(currentSection)) {
+            const gallery = document.getElementById(`gallery-${currentSection}`);
+            const slot = pickFocusedItem(gallery, focusSlots[currentSection]);
+            if (slot !== null) focusSlots[currentSection] = slot;
+        }
+    }, 110);
+}
+
 document.addEventListener('scroll', onFeedFocus, { capture: true, passive: true });
+document.addEventListener('scroll', onFeedSettle, { capture: true, passive: true });
 
 function handleNavigation(direction) {
     Stats.recordNavigation();
@@ -782,7 +921,7 @@ function handleNavigation(direction) {
         const gallery = document.getElementById(`gallery-${currentSection}`);
         if (!gallery) return;
         const items = gallery.querySelectorAll('.gallery-item');
-        const totalItems = items.length;
+        const totalItems = realCount(gallery);
         if (totalItems === 0) return;
         const cur = currentIndices[currentSection] || 0;
         const newIndex = direction === 'forward'
@@ -796,7 +935,6 @@ function handleNavigation(direction) {
     const items = gallery.querySelectorAll('.gallery-item');
     const totalItems = items.length;
     if (totalItems === 0) return;
-
     const newIndex = direction === 'forward'
         ? (currentIndices[currentSection] + 1) % totalItems
         : (currentIndices[currentSection] - 1 + totalItems) % totalItems;
@@ -817,8 +955,7 @@ function saveCurrentVideo() {
     Stats.recordSave();
     const gallery = document.getElementById(`gallery-${currentSection}`);
     if (!gallery) return;
-    const items = gallery.querySelectorAll('.gallery-item');
-    const item = items[currentIndices[currentSection]];
+    const item = itemByReal(gallery, currentIndices[currentSection]);
     if (!item) return;
     const source = item.querySelector('video source');
     if (!source || !source.src) return;
@@ -857,6 +994,15 @@ document.addEventListener('keydown', (e) => {
 // Initialize totalSections based on initial section count
 totalSections = document.querySelectorAll('.gallery-section').length;
 currentIndices = new Array(totalSections).fill(0);
+focusSlots = new Array(totalSections).fill(0);
+
+// ===== MOBILE SUPPORT =====
+let isMobile = window.innerWidth <= 768 || window.matchMedia('(pointer: coarse)').matches;
+
+// Wrap every feed around before handlers are attached, so clones are live too.
+if (isMobile) {
+    for (let i = 0; i < totalSections; i++) setupFeedWrap(document.getElementById(`gallery-${i}`));
+}
 
 // Attach auto-scroll ended listeners and resilience handlers for all sections
 for (let i = 0; i < totalSections; i++) {
@@ -864,8 +1010,6 @@ for (let i = 0; i < totalSections; i++) {
     attachVideoResilience(i);
 }
 
-// ===== MOBILE SUPPORT =====
-let isMobile = window.innerWidth <= 768 || window.matchMedia('(pointer: coarse)').matches;
 
 // Visibility change: pause all videos when tab hidden / phone locked
 document.addEventListener('visibilitychange', () => {
@@ -998,7 +1142,8 @@ function updateProgress() {
     if (!el) return;
     const gallery = document.getElementById('gallery-' + currentSection);
     if (!gallery) return;
-    const total = gallery.querySelectorAll('.gallery-item').length;
+    const total = realCount(gallery);
+    if (!total) return;
     const current = (currentIndices[currentSection] || 0) + 1;
     el.textContent = current + ' / ' + total;
 }
