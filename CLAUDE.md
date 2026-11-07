@@ -114,6 +114,10 @@ cargo build --release                    # Standard build
 cargo build --release --target x86_64-unknown-linux-musl  # Static Linux binary
 cargo check                              # Quick syntax check
 
+# Credentials (once): ~/.config/faptopia/config.json, 0600
+./target/release/faptopia auth           # interactive; 100 req/min instead of 10
+./target/release/faptopia auth --logout  # back to anonymous
+
 # Code quality
 cargo fmt                                # Format code
 cargo clippy                             # Lint with clippy
@@ -149,27 +153,73 @@ Key active dependencies and their purposes:
 ### Reddit Integration
 
 Reddit has walled off its anonymous JSON API (403 "blocked by network security")
-and old.reddit.com now 302s logged-out clients to a login page, so media is
-pulled from the public Atom feed instead:
+and old.reddit.com now 302s logged-out clients to a login page, so there are two
+access paths:
 
-1. Fetches `www.reddit.com/r/{subreddit}/{modifier}/.rss?t={time}&limit={n}`
-   (or `/user/{name}/.rss?sort={sort}&t={time}&limit={n}`)
-2. Regex-extracts RedGifs slugs from the `redgifs.com/watch/...` links inside
-   each entry's HTML-encoded body
-3. Paginates via `&after=t3_{last post id}` when `limit` exceeds 100
-4. Paces requests through `reddit_rate_gate()` (anonymous reddit allows ~1
-   request/minute; a 429 is retried using the `x-ratelimit-reset` hint)
-5. Calls RedGifs API v2 to get temporary auth token
-6. Resolves each gif ID to direct video URL (HD or SD fallback)
-7. Displays progress indicator during fetching
+**OAuth (preferred, `faptopia auth`)** -- a reddit *script* app
+(reddit.com/prefs/apps, redirect uri `http://localhost`) plus the account
+username/password, exchanged at `/api/v1/access_token` with
+`grant_type=password`. Requests go to `oauth.reddit.com/.../{top,hot,...}.json`
+with a bearer token. Reddit allows **100 requests/minute** per client id here
+versus ~10/minute anonymously, so this is the difference between seconds and
+half an hour on a 27-board run. Tokens are cached in memory for 24h and re-minted
+on a 401.
 
-Because only one feed request is needed per board (100 posts max per page),
-boards are fetched sequentially rather than concurrently.
+**Anonymous (fallback)** -- the public `/r/<sub>/<sort>/.rss` Atom feed. The
+redgifs slug is regex-scraped out of each entry's HTML-encoded body.
+
+Both paths share `reddit_get()`, which owns pacing:
+
+- `ANON_GATE` / `OAUTH_GATE` (Mutex<RedditGate>) serialise request *starts*.
+- A 429 sets a shared `blocked_until` deadline **and** multiplies the steady
+  interval (AIMD, anon 10s floor -> 40s ceiling, oauth 0.7s -> 5s). Per-worker
+  backoff alone produced 429 storms, because every worker retried into the
+  next. The old code slept a flat 62s per board - roughly 6x slower than needed.
+- `x-ratelimit-remaining: 0` parks the gate for `x-ratelimit-reset`.
+- Requests always use `limit=100`; `--limit` only truncates afterwards, because
+  a second page costs a whole rate-limit slot. Pagination caps at 3 pages
+  (anonymous) / 4 (OAuth) and stops early on a page that adds no new slugs.
+
+Pagination uses `&after=<fullname>`; the anonymous cursor comes from
+`ENTRY_ID_REGEX` over the feed, the OAuth one from `data.after`.
+
+### Progress output
+
+`PROGRESS` (a `Mutex<Progress>`) renders one `\r`-rewritten status line: board and
+video counts plus a rate-limit countdown. It only draws on a tty
+(`io::stdout().is_terminal()`), throttled to 80ms, and `progress_log()` clears the
+line before printing so log lines never smear. Non-tty output (pipes, logs) skips
+per-item lines entirely and prints board results only. The gate sleeps in 250ms
+slices so the countdown keeps ticking. Anything that prints during a run should
+go through `progress_log`, not `println!`, and `progress_finish()` must run before
+the final summary.
+
+### Concurrent runs
+
+Supported: `save_cache()` takes an exclusive `flock` on `.faptopia_cache.lock`,
+reloads, merges, and writes via temp+rename, so two jobs cannot drop each other's
+entries. `--output` exists because both jobs would otherwise write the same
+gallery file. The rate gate is per-process, so two jobs still share one per-IP
+reddit budget and interleave.
+
+### Listing cache
+
+`fetch_redgifs_ids()` checks `.faptopia_cache.json`'s `listings` map first, keyed
+by `{r|u}/{name}/{modifier}/{time}`, TTL 1 hour, bypassed by `--refresh`. A hit
+means **zero** reddit requests for that board, which is the only slow step in
+the pipeline - a warm re-run of 27 boards finishes in about a second. The full
+page yield is cached (not the truncated slice) so a later larger `--limit`
+benefits. The startup line reports how many boards actually need reddit.
 
 Input formats:
 - Format string: `r/subreddit:modifier:time` (e.g., `r/hotwife:top:month`)
 - User: `u/username:sort:time`
 - Full URL: `https://reddit.com/r/subreddit/modifier/?t=time`
+
+`fetch_media_embeds_reddit()` then resolves slugs through RedGifs with a worker
+pool sized by `--con` (default 8, config `concurrency`). Boards are also fetched
+through a worker pool (max 8); results land in per-index slots so tab order is
+preserved regardless of completion order.
 
 ### 4chan Integration
 
@@ -219,7 +269,12 @@ GitHub Actions automatically:
 
 ### API Integration Changes
 
-- **Reddit**: Uses ureq against the public Atom feed (`/.rss`) and extracts RedGifs slugs with `REDGIFS_LINK_REGEX`; pagination uses `ENTRY_ID_REGEX` + `?after=`. Requests are serialized through `reddit_rate_gate()` because anonymous reddit is limited to about one request per minute. Do not reintroduce `.json`/old.reddit.com scraping without verifying they still answer — both are currently blocked for anonymous clients.
+- **Reddit**: Two paths, both behind `reddit_get()`. OAuth (`faptopia auth`) against
+  `oauth.reddit.com` JSON lists at 100 req/min; anonymous `/rss?limit=100` as the
+  fallback. Never sleep a fixed interval per board - the gate adapts from
+  `x-ratelimit-remaining`/`-reset` and an AIMD penalty on 429. Do not reintroduce
+  `.json` scraping against `www.reddit.com` or old.reddit.com without checking;
+  both answer 403/302 for anonymous clients.
 - **4chan**: Direct API endpoint call returning thread JSON with post metadata
 - **RedGifs**: Requires temporary OAuth token (expires after session), returns HD/SD video URLs
 - Both platforms use `MediaItem { url: String }` struct for unified handling

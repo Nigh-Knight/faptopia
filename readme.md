@@ -71,11 +71,14 @@ faptopia reddit r/sub1:top:month r/sub2:hot:day
 
 Output: `faptopia_reddit.html`
 
-Reddit caps anonymous traffic at about one request per minute, so faptopia pulls
-one Atom feed per board (up to 100 posts) and waits between boards. Each board
-therefore takes roughly a minute; resolved video URLs are cached for 4 hours in
-`.faptopia_cache.json`, so re-running the same board is instant apart from the
-single feed request.
+Reddit caps anonymous traffic at a handful of requests per minute, so faptopia
+pulls one Atom feed per board (100 posts each) and paces itself between them.
+Two caches keep repeat runs cheap: resolved video URLs are kept 4 hours and each
+board's scraped listing is kept 1 hour in `.faptopia_cache.json`, so a re-run
+within the hour needs no reddit request at all. `--refresh` forces a re-scrape.
+
+If you can get reddit API approval (`faptopia auth`, a script app), requests go
+to OAuth instead: 100 per minute, which turns a 27-board run into seconds.
 
 ### 4chan Galleries
 
@@ -97,7 +100,23 @@ Output: `faptopia_4chan.html`
 --serve       Start local server for mobile access (default port 6969)
 --port N      Custom port for --serve
 --deploy      Deploy to Cloudflare Pages after generating gallery
+--refresh     Ignore cached board listings and re-scrape reddit
+--con N       Concurrent RedGifs lookups (default 8)
+--output PATH Gallery output path
 ```
+
+Credentials for OAuth live in `~/.config/faptopia/config.json` (0600) and are
+managed with `faptopia auth` / `faptopia auth --logout`.
+
+Progress is one rewritten line (`3/27 boards   41/1620 videos   waiting 12s`),
+not a line per item. Redirected output gets board-level lines instead.
+
+### Running two jobs at once
+
+It works, with three caveats: both share the same per-IP rate budget, so reddit
+requests interleave and each job slows down; give each one its own `--output` or
+they overwrite the same gallery; the cache is safe (writers take a lock and merge
+instead of clobbering).
 
 Examples:
 
