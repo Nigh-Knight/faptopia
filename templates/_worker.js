@@ -8,8 +8,9 @@ export default {
             const gifId = path.replace('/video/redgifs/', '');
             try {
                 const { hd, sd } = await resolveRedgifsVideo(gifId);
-                // Try HD first, fall back to SD if the CDN refuses it
-                return proxyVideo([hd, sd], {
+                // SD first for fast starts; HD only when asked for (?q=hd) or when the CDN refuses SD
+                const wantHd = url.searchParams.get('q') === 'hd';
+                return proxyVideo(wantHd ? [hd, sd] : [sd, hd], {
                     'Referer': 'https://www.redgifs.com/',
                     'Origin': 'https://www.redgifs.com',
                 }, request);

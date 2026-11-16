@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'faptopia-shell-v4';
+const SHELL_CACHE = 'faptopia-shell-v5';
 const DB_NAME = 'faptopia-videos';
 const DB_VERSION = 1;
 const STORE = 'videos';
@@ -102,6 +102,8 @@ function blobResponse(blob, contentType, rangeHeader) {
 // Inflight streams for concurrent requests of the same gif id
 const inflight = new Map();
 let prefetchChain = Promise.resolve();
+// Bumped on every video-prefetch message: a newer request cancels the rest of an older one
+let prefetchEpoch = 0;
 
 function rangeStartsAtZero(range) {
     if (!range) return true;
@@ -324,8 +326,10 @@ self.addEventListener('message', async (e) => {
         }
     } else if (msg.type === 'video-prefetch') {
         const ids = Array.isArray(msg.ids) ? msg.ids : [];
+        const epoch = ++prefetchEpoch;
         prefetchChain = prefetchChain.then(async () => {
             for (const id of ids) {
+                if (epoch !== prefetchEpoch) break;
                 await prefetchRedgifs(id);
             }
         }).catch(() => {});
