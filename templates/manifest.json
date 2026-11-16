@@ -1,8 +1,10 @@
 {
+  "id": "/",
   "name": "Faptopia",
   "short_name": "Faptopia",
   "start_url": "/",
-  "display": "fullscreen",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#000000",
   "theme_color": "#000000",

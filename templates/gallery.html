@@ -9,6 +9,20 @@
     <meta name="theme-color" content="#000000">
     <link rel="manifest" href="manifest.json">
     <style>{{STYLES}}</style>
+    <style id="faptopia-mobile-css">
+html,body{overscroll-behavior:none}
+@media (max-width:768px),(pointer:coarse){
+  body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .gallery-item video,.gallery-item iframe{pointer-events:none}
+  #exit-guard{position:fixed;left:0;right:0;bottom:0;height:calc(env(safe-area-inset-bottom,0px) + 24px);z-index:9500;touch-action:none;background:transparent}
+  #tap-chip{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.9);padding:10px 16px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff;font:600 15px system-ui,sans-serif;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:9600}
+  #tap-chip.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  #tap-chip.show.left{left:22%}
+  #tap-chip.show.right{left:78%}
+  .board-switcher__menu{overscroll-behavior:contain;contain:content}
+  .board-switcher__option{content-visibility:auto;contain-intrinsic-size:auto 38px}
+}
+    </style>
 </head>
 <body tabindex="0">
     <!-- Mobile: merged board/platform switcher (floating top-left) -->
@@ -281,6 +295,79 @@
     },60);
   }
   setTimeout(function(){ try{ adjust(); }catch(x){} },0);
+})();
+    </script>
+    <!-- Mobile: no native controls, tap to pause, double-tap +/-5s, exit guard, continuous prefetch -->
+    <script id="faptopia-mobile">
+(function(){
+  if(typeof isMobile==='undefined'||!isMobile) return;
+  var DBL_MS=260, TAP_MS=350, MOVE_PX=10, SEEK_S=5, LAST=null, DIRM='fwd', pfT=0;
+  var guard=document.createElement('div'); guard.id='exit-guard'; document.body.appendChild(guard);
+  var chip=document.createElement('div'); chip.id='tap-chip'; document.body.appendChild(chip);
+  function showChip(t,side){ chip.textContent=t; chip.className='show '+(side||''); clearTimeout(chip._t); chip._t=setTimeout(function(){ chip.className=''; },550); }
+  document.querySelectorAll('video').forEach(function(v){
+    v.controls=false; v.removeAttribute('controls');
+    v.setAttribute('controlslist','nodownload noremoteplayback');
+    v.setAttribute('disablepictureinpicture','');
+  });
+  function vidOf(el){ var it=el&&el.closest?el.closest('.gallery-item'):null; return it?it.querySelector('video'):null; }
+  var vp=document.getElementById('board-viewport')||document.body;
+  var down=null, lastTap=null, tapTimer=0;
+  vp.addEventListener('pointerdown',function(e){
+    if(e.target.closest&&e.target.closest('.board-switcher,.video-error button')){ down=null; return; }
+    down={x:e.clientX,y:e.clientY,t:Date.now()};
+  },{passive:true});
+  vp.addEventListener('pointermove',function(e){
+    if(down&&(Math.abs(e.clientX-down.x)>MOVE_PX||Math.abs(e.clientY-down.y)>MOVE_PX)) down=null;
+  },{passive:true});
+  vp.addEventListener('pointercancel',function(){ down=null; },{passive:true});
+  vp.addEventListener('pointerup',function(e){
+    if(!down) return;
+    var d=down; down=null;
+    if(Date.now()-d.t>TAP_MS) return;
+    var v=vidOf(e.target); if(!v) return;
+    var x=e.clientX, now=Date.now();
+    if(lastTap&&now-lastTap.t<DBL_MS&&Math.abs(x-lastTap.x)<80){
+      clearTimeout(tapTimer); lastTap=null;
+      var back=x<window.innerWidth/2;
+      try{ v.muted=false; v.currentTime=Math.max(0,Math.min((v.duration||1e9)-0.05,(v.currentTime||0)+(back?-SEEK_S:SEEK_S))); }catch(err){}
+      showChip(back?'-5s':'+5s',back?'left':'right');
+      return;
+    }
+    lastTap={t:now,x:x};
+    clearTimeout(tapTimer);
+    tapTimer=setTimeout(function(){
+      lastTap=null;
+      v.muted=false;
+      if(v.paused){ v.play().catch(function(){}); showChip('\u25B6',''); }
+      else { v.pause(); showChip('\u275A\u275A',''); }
+    },DBL_MS);
+  });
+  function prefetch(sec,idx){
+    if(!('serviceWorker' in navigator)||!navigator.serviceWorker.controller) return;
+    var g=galleryOf(sec); if(!g) return;
+    var n=realCount(g); if(n<2) return;
+    var offs=(DIRM==='back')?[-1,-2,-3,1]:[1,2,3,-1];
+    var ids=[], seen={};
+    offs.forEach(function(o){
+      var v=getVideoAt(sec,((idx+o)%n+n)%n);
+      var id=v&&v.dataset.gifId;
+      if(id&&!seen[id]){ seen[id]=1; ids.push(id); }
+    });
+    if(ids.length) navigator.serviceWorker.controller.postMessage({type:'video-prefetch',ids:ids});
+  }
+  var _ouf2=window.updateVideoFocus;
+  window.updateVideoFocus=function(sec,idx){
+    var r=_ouf2.apply(this,arguments);
+    var g=galleryOf(sec), n=g?realCount(g):0;
+    if(LAST!==null&&LAST!==idx&&n>1){
+      if(((LAST-1+n)%n)===idx) DIRM='back'; else if(((LAST+1)%n)===idx) DIRM='fwd';
+    }
+    LAST=idx;
+    clearTimeout(pfT);
+    pfT=setTimeout(function(){ prefetch(sec,idx); },350);
+    return r;
+  };
 })();
     </script>
 </body>
