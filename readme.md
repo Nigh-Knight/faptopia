@@ -10,7 +10,9 @@ A CLI tool that builds interactive, standalone HTML video galleries from Reddit 
 
 - Galleries from Reddit (via RedGifs) and 4chan /gif/ threads
 - Multi-tab interface — multiple subreddits or threads in one gallery
-- Keyboard navigation (Z / X to scroll, C to switch boards, P for auto-scroll, S to save)
+- Keyboard navigation (Z / X to scroll, ← / → to seek 5s, C / Shift+C to switch boards, P for auto-scroll, Ctrl+S to save)
+- Fast-start player: SD-first, load budget of three videos, direction-aware preload, stall recovery
+- Reddit and 4chan galleries link into one circle (C on the last board opens the other gallery)
 - Touch support: swipe to navigate, wrap-around at ends
 - Progress counter overlay (e.g. `3 / 47`)
 - Lazy loading and autoplay management for performance
@@ -172,9 +174,20 @@ The stats page shows:
 |-----|--------|
 | `Z` | Previous video |
 | `X` | Next video |
-| `C` | Switch to next board/tab |
+| `→` | Seek forward 5s |
+| `←` | Seek back 5s |
+| `C` | Next board/tab (on the last board: open the other gallery) |
+| `Shift+C` | Previous board/tab (on the first board: open the other gallery on its last board) |
 | `P` | Toggle auto-scroll |
-| `S` | Save (download) current video |
+| `Ctrl+S` | Save current video (opens a save dialog in Chrome, Edge, Brave) |
+
+### Player
+
+- Reddit videos load SD first; HD is the fallback and the file used for saving
+- Only the current, next and previous videos stay loaded
+- The next video in your direction of travel preloads once the current one has ~6s buffered
+- Stalled or failed videos retry up to 3 times; the bottom-left status pill shows what is happening
+- Saving needs the media host to allow cross-origin fetches; otherwise the file opens in a new tab
 
 ### Mobile
 
@@ -186,6 +199,7 @@ The stats page shows:
 ### Tabs
 
 - Click tabs to switch sources
+- The tab bar scrolls in steps: the active tab becomes the first visible once it passes the right edge
 - Click `x` on a tab to close it (minimum 1 required)
 
 ---
