@@ -117,13 +117,27 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
     var b=(DIR==='back');
     return { next:getVideoAt(sec,b?back:fwd), prev:getVideoAt(sec,b?fwd:back) };
   }
+  function copies(sec,i){
+    var g=galleryOf(sec), out=[]; if(!g) return out;
+    var items=g.querySelectorAll('.gallery-item[data-real="'+i+'"]');
+    for(var k=0;k<items.length;k++){ var cv=items[k].querySelector('video'); if(cv) out.push(cv); }
+    if(!out.length){ var one=getVideoAt(sec,i); if(one) out.push(one); }
+    return out;
+  }
   function settle(sec,idx,cur){
     if(cur!==FOCUS) return;
-    var n=neighbors(sec,idx), keep=new Set([cur]), e=E(cur);
-    if(n.next&&n.next!==cur){ wake(n.next,'auto','sd'); keep.add(n.next); e.nextV=n.next; } else e.nextV=null;
-    if(n.prev&&n.prev!==cur&&n.prev!==n.next){ wake(n.prev,cur.readyState>=2?'auto':'metadata','sd'); keep.add(n.prev); e.otherV=n.prev; } else e.otherV=null;
-    Array.from(loaded).forEach(function(v){ if(!keep.has(v)) unload(v); });
+    var g=galleryOf(sec); if(!g) return;
+    var tot=realCount(g), keep=new Set([cur]), e=E(cur);
+    e.nextV=null; e.otherV=null;
+    if(tot>1){
+      var b=(DIR==='back');
+      var nx=b?(idx-1+tot)%tot:(idx+1)%tot, pv=b?(idx+1)%tot:(idx-1+tot)%tot;
+      copies(sec,nx).forEach(function(v){ if(v===cur) return; wake(v,'auto','sd'); keep.add(v); if(!e.nextV) e.nextV=v; });
+      copies(sec,pv).forEach(function(v){ if(v===cur||keep.has(v)) return; wake(v,cur.readyState>=2?'auto':'metadata','sd'); keep.add(v); if(!e.otherV) e.otherV=v; });
+    }
+    var MAXL=(window.matchMedia&&matchMedia('(pointer:coarse)').matches)?5:8; var extra=Array.from(loaded).filter(function(v){ return !keep.has(v); }); while(loaded.size>MAXL&&extra.length) unload(extra.shift());
   }
+
   function prepare(sec,idx){
     var cur=getVideoAt(sec,idx); if(!cur) return;
     var g0=galleryOf(sec), tot=g0?realCount(g0):0, last=lastIdx[sec];

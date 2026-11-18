@@ -493,6 +493,7 @@ function setupFeedWrap(gallery) {
 // reanchorFeed: the user settled on a clone, so snap the identical real item to
 // the same screen position in a single instant jump. Nothing is animated, so it
 // reads as one continuous feed rather than a wrap.
+let seamWaitSince = 0;
 function reanchorFeed(sectionIndex) {
     if (!Number.isInteger(sectionIndex)) return false;
     const gallery = galleryOf(sectionIndex);
@@ -500,8 +501,21 @@ function reanchorFeed(sectionIndex) {
     const items = itemsOf(gallery);
     const slot = pickFocusedItem(gallery, focusSlots[sectionIndex]);
     const clone = slot === null ? null : items[slot];
-    if (!clone || !clone.classList.contains('is-clone')) return false;
-    scrollFeedItemTo(sectionIndex, realIndex(clone, slot), 'instant');
+    if (!clone || !clone.classList.contains('is-clone')) { seamWaitSince = 0; return false; }
+    const idx = realIndex(clone, slot);
+    const real = itemByReal(gallery, idx);
+    const rv = real ? real.querySelector('video') : null;
+    // The real copy is what plays; hold the jump until it has a frame so the
+    // swap never shows an empty player. Give up after 700ms so it cannot stick.
+    if (rv && rv.readyState < 3) {
+        if (!seamWaitSince) seamWaitSince = Date.now();
+        if (Date.now() - seamWaitSince < 250) {
+            setTimeout(() => reanchorFeed(sectionIndex), 60);
+            return false;
+        }
+    }
+    seamWaitSince = 0;
+    scrollFeedItemTo(sectionIndex, idx, 'instant');
     return true;
 }
 
@@ -810,6 +824,34 @@ function getVideoAt(sectionIndex, itemIndex) {
     return item ? item.querySelector('video') : null;
 }
 
+// SEAM POSTERS: a clone is never the video that plays, so it shows a blank
+// player until the jump lands. Paint the real twin's first frame onto its
+// clones as a poster as soon as that twin has decoded one.
+function paintSeamPosters(video) {
+    try {
+        const item = video.closest('.gallery-item');
+        const gallery = video.closest('.gallery-em');
+        if (!item || !gallery || item.classList.contains('is-clone')) return;
+        const real = item.dataset.real;
+        if (real === undefined) return;
+        const clones = gallery.querySelectorAll('.gallery-item.is-clone[data-real="' + real + '"]');
+        if (!clones.length || !video.videoWidth) return;
+        const scale = Math.min(1, 360 / video.videoWidth);
+        const c = document.createElement('canvas');
+        c.width = Math.round(video.videoWidth * scale);
+        c.height = Math.round(video.videoHeight * scale);
+        c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+        const url = c.toDataURL('image/jpeg', 0.6);
+        clones.forEach(cl => {
+            const cv = cl.querySelector('video');
+            if (cv && !cv.dataset.seamPoster) { cv.poster = url; cv.dataset.seamPoster = '1'; }
+        });
+    } catch (e) { /* tainted canvas or detached node: skip */ }
+}
+document.addEventListener('loadeddata', e => {
+    if (e.target && e.target.tagName === 'VIDEO') paintSeamPosters(e.target);
+}, true);
+
 function warmNeighbors(sectionIndex, itemIndex) {
     if (throttleMode || document.hidden) return;
     const gallery = galleryOf(sectionIndex);
@@ -1021,6 +1063,13 @@ let feedSettleTimer = 0;
 function onFeedSettle(e) {
     if (!isFeedScroll(e) || e.target !== galleryOf(currentSection)) return;
     clearTimeout(feedSettleTimer);
+    // Landing on a clone shows an unloaded player, so hop off it quickly.
+    const seamDelay = (() => {
+        const g = galleryOf(currentSection);
+        const sl = g ? pickFocusedItem(g, focusSlots[currentSection]) : null;
+        const it = sl === null ? null : itemsOf(g)[sl];
+        return it && it.classList.contains('is-clone') ? 70 : 110;
+    })();
     feedSettleTimer = setTimeout(() => {
         if (reanchorFeed(currentSection)) {
             const gallery = galleryOf(currentSection);
@@ -1039,7 +1088,7 @@ function onFeedSettle(e) {
             updateProgress();
         }
         updateVideoFocus(currentSection, currentIndices[currentSection]);
-    }, 110);
+    }, seamDelay);
 }
 
 document.addEventListener('scroll', onFeedFocus, { capture: true, passive: true });
@@ -1196,7 +1245,7 @@ function buildSwitcherMenu() {
 }
 
 function updateSwitcherPill() {
-    const label = document.getElementById('board-switcher-label');
+    const label = (document.getElementById('board-switcher-label') || document.getElementById('board-switcher__label'));
     if (!label) return;
     const tabs = document.querySelectorAll('.tab-button .tab-label');
     label.textContent = tabs[currentSection] ? tabs[currentSection].textContent : '';
