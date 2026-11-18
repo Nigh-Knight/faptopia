@@ -14,6 +14,9 @@ html,body{overscroll-behavior:none}
 @media (max-width:768px),(pointer:coarse){
   body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   .gallery-item video,.gallery-item iframe{pointer-events:none}
+  .gallery-item video::-webkit-media-controls,
+  .gallery-item video::-webkit-media-controls-enclosure,
+  .gallery-item video::-webkit-media-controls-panel{display:none!important}
   #exit-guard{position:fixed;left:0;right:0;bottom:0;height:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:9500;touch-action:none;background:transparent}
   #tap-chip{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.9);padding:10px 16px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff;font:600 15px system-ui,sans-serif;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:9600}
   #tap-chip.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
@@ -54,11 +57,11 @@ html,body{overscroll-behavior:none}
     <div class="autoscroll-alert" id="autoscroll-alert"></div>
     <div class="throttle-toast" id="throttle-toast"></div>
     <script>{{SCRIPT}}</script>
-    <!-- Player engine: load budget, SD-only default, direction-aware preload, recovery, seek, save dialog -->
+    <!-- Player engine: load budget, SD-only default, fast neighbor preload, recovery, seek, save dialog -->
     <script id="faptopia-engine">
 (function(){
-  var DIR='fwd', lastIdx={}, FOCUS=null, STUCK_MS=8000;
-  var AHEAD_S=6, SETTLE_MS=700, PRELOAD_BOTH=false, SEEK_S=5;
+  var DIR='fwd', lastIdx={}, FOCUS=null, STUCK_MS=7000;
+  var AHEAD_S=3, SETTLE_MS=200, PRELOAD_BOTH=false, SEEK_S=5;
   var PROXIED=false; try{ PROXIED=isProxied(); }catch(x){}
   var loaded=new Set(), settleTimer=null, holdUntil=0;
   var pill=document.createElement('div');
@@ -114,12 +117,12 @@ html,body{overscroll-behavior:none}
   }
   function settle(sec,idx,cur){
     if(cur!==FOCUS) return;
-    if(cur.readyState<3){
-      settleTimer=setTimeout(function(){ settle(sec,idx,cur); },400);
+    if(cur.readyState<2){
+      settleTimer=setTimeout(function(){ settle(sec,idx,cur); },200);
       return;
     }
     var n=neighbors(sec,idx), keep=new Set([cur]), e=E(cur);
-    if(n.next&&n.next!==cur){ wake(n.next,'metadata','sd'); keep.add(n.next); e.nextV=n.next; } else e.nextV=null;
+    if(n.next&&n.next!==cur){ wake(n.next,cur.readyState>=3?'auto':'metadata','sd'); keep.add(n.next); e.nextV=n.next; } else e.nextV=null;
     if(n.prev&&n.prev!==cur&&n.prev!==n.next){ wake(n.prev,'metadata','sd'); keep.add(n.prev); e.otherV=n.prev; } else e.otherV=null;
     Array.from(loaded).forEach(function(v){ if(!keep.has(v)) unload(v); });
   }
@@ -179,14 +182,14 @@ html,body{overscroll-behavior:none}
       if(e.tries<=3) clr();
       var nv=e.nextV, ov=e.otherV;
       var full=(v.duration&&isFinite(v.duration)&&v.currentTime+aheadOf(v)>=v.duration-0.5);
-      if(nv&&nv.getAttribute('preload')!=='auto'&&(aheadOf(v)>=AHEAD_S||full)&&v.currentTime>1){
+      if(nv&&nv.getAttribute('preload')!=='auto'&&(aheadOf(v)>=AHEAD_S||full||v.readyState>=3)){
         nv.setAttribute('preload','auto');
       }
       if(PRELOAD_BOTH&&nv&&ov&&nv.getAttribute('preload')==='auto'&&ov.getAttribute('preload')!=='auto'&&(aheadOf(nv)>=AHEAD_S||nv.readyState===4)){
         ov.setAttribute('preload','auto');
       }
     }
-  },1000);
+  },600);
 
   function seek(d){
     var v=FOCUS; if(!v) return;
@@ -269,42 +272,13 @@ html,body{overscroll-behavior:none}
     <script id="faptopia-tabs">
 (function(){
   var PAD=12;
-  function bar(){ return document.querySelector('.tabs'); }
-  function adjust(){
-    var t=bar(); if(!t||(t.offsetParent===null&&getComputedStyle(t).display==='none')) return;
-    var a=t.querySelector('.tab-button.active'); if(!a) return;
-    var L=t.scrollLeft, W=t.clientWidth, aL=a.offsetLeft, aR=aL+a.offsetWidth;
-    if(aR>L+W-PAD){ t.scrollTo({left:Math.max(0,aL-PAD),behavior:'smooth'}); }
-    else if(aL<L+PAD){ t.scrollTo({left:Math.max(0,aR-W+PAD),behavior:'smooth'}); }
-  }
-  var _fss=window.finishSectionSwitch;
-  if(typeof _fss==='function'){
-    window.finishSectionSwitch=function(){ var r=_fss.apply(this,arguments); try{ adjust(); }catch(x){} return r; };
-  }
-  window.addEventListener('keydown',function(ev){
-    var k=ev.key;
-    if((k!=='c'&&k!=='C')||ev.shiftKey||ev.ctrlKey||ev.altKey||ev.metaKey) return;
-    var a=document.activeElement;
-    if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)) return;
-    var tg=document.querySelector('.gallery-toggle');
-    if(!tg) return;
-    if(currentSection!==totalSections-1) return;
-    ev.preventDefault(); ev.stopImmediatePropagation();
-    window.location.href=tg.getAttribute('href');
-  },true);
-  if(location.hash==='#last'){
-    setTimeout(function(){
-      try{ showSection(totalSections-1); }catch(x){}
-      try{ history.replaceState(null,'',location.pathname+location.search); }catch(x){}
-    },60);
-  }
-  setTimeout(function(){ try{ adjust(); }catch(x){} },0);
-})();
+  function bar(){ return document.querySelector('.tabs'); }\n  function adjust(){\n    var t=bar(); if(!t||(t.offsetParent===null&&getComputedStyle(t).display==='none')) return;\n    var a=t.querySelector('.tab-button.active'); if(!a) return;\n    var L=t.scrollLeft, W=t.clientWidth, aL=a.offsetLeft, aR=aL+a.offsetWidth;\n    if(aR>L+W-PAD){ t.scrollTo({left:Math.max(0,aL-PAD),behavior:'smooth'}); }\n    else if(aL<L+PAD){ t.scrollTo({left:Math.max(0,aR-W+PAD),behavior:'smooth'}); }\n  }\n  var _fss=window.finishSectionSwitch;\n  if(typeof _fss==='function'){\n    window.finishSectionSwitch=function(){ var r=_fss.apply(this,arguments); try{ adjust(); }catch(x){} return r; };\n  }\n  window.addEventListener('keydown',function(ev){\n    var k=ev.key;\n    if((k!=='c'&&k!=='C')||ev.shiftKey||ev.ctrlKey||ev.altKey||ev.metaKey) return;\n    var a=document.activeElement;\n    if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)) return;\n    var tg=document.querySelector('.gallery-toggle');\n    if(!tg) return;\n    if(currentSection!==totalSections-1) return;\n    ev.preventDefault(); ev.stopImmediatePropagation();\n    window.location.href=tg.getAttribute('href');\n  },true);\n  if(location.hash==='#last'){\n    setTimeout(function(){\n      try{ showSection(totalSections-1); }catch(x){}\n      try{ history.replaceState(null,'',location.pathname+location.search); }catch(x){}\n    },60);\n  }\n  setTimeout(function(){ try{ adjust(); }catch(x){} },0);\n})();
     </script>
     <!-- Mobile: no native controls, tap to pause, double-tap +/-5s, exit guard, wrap focus fallback -->
     <script id="faptopia-mobile">
 (function(){
-  if(typeof isMobile==='undefined'||!isMobile) return;
+  var mobile=typeof isMobile!=='undefined'?isMobile:(window.innerWidth<=768||window.matchMedia('(pointer:coarse)').matches);
+  if(!mobile) return;
   var _pfi=window.pickFocusedItem;
   if(typeof _pfi==='function'){
     window.pickFocusedItem=function(gallery,hint){
@@ -326,11 +300,13 @@ html,body{overscroll-behavior:none}
   var guard=document.createElement('div'); guard.id='exit-guard'; document.body.appendChild(guard);
   var chip=document.createElement('div'); chip.id='tap-chip'; document.body.appendChild(chip);
   function showChip(t,side){ chip.textContent=t; chip.className='show '+(side||''); clearTimeout(chip._t); chip._t=setTimeout(function(){ chip.className=''; },550); }
-  document.querySelectorAll('video').forEach(function(v){
+  function stripControls(v){
     v.controls=false; v.removeAttribute('controls');
     v.setAttribute('controlslist','nodownload noremoteplayback');
     v.setAttribute('disablepictureinpicture','');
-  });
+  }
+  document.querySelectorAll('video').forEach(stripControls);
+  document.addEventListener('play',function(e){ if(e.target&&e.target.tagName==='VIDEO') stripControls(e.target); },true);
   function vidOf(el){ var it=el&&el.closest?el.closest('.gallery-item'):null; return it?it.querySelector('video'):null; }
   var vp=document.getElementById('board-viewport')||document.body;
   var down=null, lastTap=null, tapTimer=0;
