@@ -304,7 +304,7 @@ html,body{overscroll-behavior:none}
   setTimeout(function(){ try{ adjust(); }catch(x){} },0);
 })();
     </script>
-    <!-- Mobile: no native controls, tap to pause, double-tap +/-5s, exit guard, wrap focus fallback -->
+    <!-- Mobile: no native controls, play-while-scrolling, figure-8 board wrap, double-tap +/-5s -->
     <script id="faptopia-mobile">
 (function(){
   var mobile=typeof isMobile!=='undefined'?isMobile:(window.innerWidth<=768||window.matchMedia('(pointer:coarse)').matches);
@@ -326,6 +326,22 @@ html,body{overscroll-behavior:none}
       return best;
     };
   }
+  var _sb=window.switchBoard;
+  if(typeof _sb==='function'){
+    window.switchBoard=function(dir){
+      if(totalSections<2) return _sb.apply(this,arguments);
+      var vp=boardViewport(), secs=boardSections();
+      if(!vp||secs.length<=totalSections) return _sb.apply(this,arguments);
+      var wrapTo=(dir==='back'&&currentSection===0)?secs[0]:((dir!=='back'&&currentSection===totalSections-1)?secs[secs.length-1]:null);
+      if(!wrapTo) return _sb.apply(this,arguments);
+      var targetIdx=dir==='back'?totalSections-1:0;
+      boardScrollTarget=targetIdx;
+      boardScrollLeft=boardOffset(wrapTo);
+      boardScrollTries=0;
+      vp.scrollTo({left:boardScrollLeft,behavior:'smooth'});
+      setTimeout(function(){ if(typeof reanchorBoard==='function') reanchorBoard(targetIdx,wrapTo); },320);
+    };
+  }
   var DBL_MS=260, TAP_MS=350, MOVE_PX=10, SEEK_S=5;
   var guard=document.createElement('div'); guard.id='exit-guard'; document.body.appendChild(guard);
   var chip=document.createElement('div'); chip.id='tap-chip'; document.body.appendChild(chip);
@@ -337,6 +353,27 @@ html,body{overscroll-behavior:none}
   }
   document.querySelectorAll('video').forEach(stripControls);
   document.addEventListener('play',function(e){ if(e.target&&e.target.tagName==='VIDEO') stripControls(e.target); },true);
+  var lastScrollIdx=-1;
+  document.addEventListener('scroll',function(e){
+    var t=e&&e.target;
+    if(!t||!t.classList||(!t.classList.contains('gallery-em')&&!t.classList.contains('gallery-em__track'))) return;
+    var g=galleryOf(currentSection); if(!g||(t!==g&&!g.contains(t))) return;
+    var slot=pickFocusedItem(g,focusSlots[currentSection]);
+    if(slot===null) return;
+    var el=itemsOf(g)[slot]; if(!el) return;
+    var idx=realIndex(el,slot);
+    if(idx===lastScrollIdx) return;
+    lastScrollIdx=idx;
+    var v=el.querySelector('video');
+    if(v){
+      stripControls(v);
+      v.setAttribute('preload','auto');
+      if(v.paused){ v.muted=true; v.play().catch(function(){}); }
+    }
+    if(typeof updateVideoFocus==='function'){
+      try{ updateVideoFocus(currentSection,idx); }catch(x){}
+    }
+  },{capture:true,passive:true});
   function vidOf(el){ var it=el&&el.closest?el.closest('.gallery-item'):null; return it?it.querySelector('video'):null; }
   var vp=document.getElementById('board-viewport')||document.body;
   var down=null, lastTap=null, tapTimer=0;
