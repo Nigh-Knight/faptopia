@@ -61,7 +61,7 @@ html,body{overscroll-behavior:none}
     <script id="faptopia-engine">
 (function(){
   var DIR='fwd', lastIdx={}, FOCUS=null, STUCK_MS=7000;
-  var AHEAD_S=3, SETTLE_MS=200, PRELOAD_BOTH=false, SEEK_S=5;
+  var AHEAD_S=3, SETTLE_MS=80, PRELOAD_BOTH=false, SEEK_S=5;
   var PROXIED=false; try{ PROXIED=isProxied(); }catch(x){}
   var loaded=new Set(), settleTimer=null, holdUntil=0;
   var pill=document.createElement('div');
@@ -117,12 +117,8 @@ html,body{overscroll-behavior:none}
   }
   function settle(sec,idx,cur){
     if(cur!==FOCUS) return;
-    if(cur.readyState<2){
-      settleTimer=setTimeout(function(){ settle(sec,idx,cur); },200);
-      return;
-    }
     var n=neighbors(sec,idx), keep=new Set([cur]), e=E(cur);
-    if(n.next&&n.next!==cur){ wake(n.next,cur.readyState>=3?'auto':'metadata','sd'); keep.add(n.next); e.nextV=n.next; } else e.nextV=null;
+    if(n.next&&n.next!==cur){ wake(n.next,'auto','sd'); keep.add(n.next); e.nextV=n.next; } else e.nextV=null;
     if(n.prev&&n.prev!==cur&&n.prev!==n.next){ wake(n.prev,'metadata','sd'); keep.add(n.prev); e.otherV=n.prev; } else e.otherV=null;
     Array.from(loaded).forEach(function(v){ if(!keep.has(v)) unload(v); });
   }
@@ -151,7 +147,8 @@ html,body{overscroll-behavior:none}
     }
     var pos=v.currentTime||0;
     setQuality(v,'sd');
-    say('Retrying (SD, try '+e.tries+'/3)...');
+    var hasSd=!PROXIED&&!!v.dataset.sdUrl;
+    say(hasSd?('Retrying (SD, try '+e.tries+'/3)...'):('Retrying (try '+e.tries+'/3)...'));
     v.setAttribute('preload','auto');
     v.addEventListener('loadedmetadata',function(){ try{ if(pos>0.5) v.currentTime=pos; }catch(x){} },{once:true});
     try{ v.load(); }catch(x){}
@@ -304,7 +301,7 @@ html,body{overscroll-behavior:none}
   setTimeout(function(){ try{ adjust(); }catch(x){} },0);
 })();
     </script>
-    <!-- Mobile: no native controls, play-while-scrolling, figure-8 board wrap, double-tap +/-5s -->
+    <!-- Mobile: no native controls, play-while-scrolling, figure-8 feed & board wrap, double-tap +/-5s -->
     <script id="faptopia-mobile">
 (function(){
   var mobile=typeof isMobile!=='undefined'?isMobile:(window.innerWidth<=768||window.matchMedia('(pointer:coarse)').matches);
@@ -353,7 +350,7 @@ html,body{overscroll-behavior:none}
   }
   document.querySelectorAll('video').forEach(stripControls);
   document.addEventListener('play',function(e){ if(e.target&&e.target.tagName==='VIDEO') stripControls(e.target); },true);
-  var lastScrollIdx=-1;
+  var lastScrollIdx=-1, feedReanchorTimer=0;
   document.addEventListener('scroll',function(e){
     var t=e&&e.target;
     if(!t||!t.classList||(!t.classList.contains('gallery-em')&&!t.classList.contains('gallery-em__track'))) return;
@@ -361,6 +358,10 @@ html,body{overscroll-behavior:none}
     var slot=pickFocusedItem(g,focusSlots[currentSection]);
     if(slot===null) return;
     var el=itemsOf(g)[slot]; if(!el) return;
+    clearTimeout(feedReanchorTimer);
+    if(el.hasAttribute('data-real')&&typeof reanchorFeed==='function'){
+      feedReanchorTimer=setTimeout(function(){ try{ reanchorFeed(g,el); }catch(x){} },140);
+    }
     var idx=realIndex(el,slot);
     if(idx===lastScrollIdx) return;
     lastScrollIdx=idx;
@@ -374,8 +375,27 @@ html,body{overscroll-behavior:none}
       try{ updateVideoFocus(currentSection,idx); }catch(x){}
     }
   },{capture:true,passive:true});
-  function vidOf(el){ var it=el&&el.closest?el.closest('.gallery-item'):null; return it?it.querySelector('video'):null; }
   var vp=document.getElementById('board-viewport')||document.body;
+  var boardReanchorTimer=0;
+  if(vp&&vp.id==='board-viewport'){
+    vp.addEventListener('scroll',function(){
+      clearTimeout(boardReanchorTimer);
+      boardReanchorTimer=setTimeout(function(){
+        if(typeof reanchorBoard!=='function'||typeof boardSections!=='function') return;
+        var secs=boardSections(), sl=vp.scrollLeft, w=vp.clientWidth||window.innerWidth;
+        if(!w) return;
+        for(var i=0;i<secs.length;i++){
+          var s=secs[i];
+          if(Math.abs((s.offsetLeft||0)-sl)<w*0.25&&s.hasAttribute('data-real')){
+            var ri=parseInt(s.getAttribute('data-real'),10);
+            if(!isNaN(ri)) try{ reanchorBoard(ri,s); }catch(x){}
+            break;
+          }
+        }
+      },140);
+    },{passive:true});
+  }
+  function vidOf(el){ var it=el&&el.closest?el.closest('.gallery-item'):null; return it?it.querySelector('video'):null; }
   var down=null, lastTap=null, tapTimer=0;
   vp.addEventListener('pointerdown',function(e){
     if(e.target.closest&&e.target.closest('.board-switcher,.video-error button')){ down=null; return; }
