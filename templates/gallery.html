@@ -13,6 +13,8 @@
 html,body{overscroll-behavior:none}
 @media (max-width:768px),(pointer:coarse){
   body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .board-viewport,.board-track,.gallery-em,.gallery-em__track,.tabs{scrollbar-width:none;-ms-overflow-style:none}
+  .board-viewport::-webkit-scrollbar,.board-track::-webkit-scrollbar,.gallery-em::-webkit-scrollbar,.gallery-em__track::-webkit-scrollbar,.tabs::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
   .gallery-item video,.gallery-item iframe{pointer-events:none}
   .gallery-item video::-webkit-media-controls,
   .gallery-item video::-webkit-media-controls-enclosure,
@@ -32,7 +34,7 @@ html,body{overscroll-behavior:none}
     <div class="board-switcher" id="board-switcher">
         <button class="board-switcher__trigger" id="board-switcher-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch board">
             <span class="board-switcher__dot" id="board-switcher-dot"></span>
-            <span class="board-switcher__label" id="board-switcher-label"></span>
+            <span class="board-switcher__label" id="board-switcher__label"></span>
             <span class="board-switcher__caret" aria-hidden="true"></span>
         </button>
         <div class="board-switcher__menu" id="board-switcher-menu" role="listbox" aria-activedescendant="board-switcher-menu" aria-label="Boards"></div>
@@ -61,7 +63,7 @@ html,body{overscroll-behavior:none}
     <script id="faptopia-engine">
 (function(){
   var DIR='fwd', lastIdx={}, FOCUS=null, STUCK_MS=7000;
-  var AHEAD_S=3, SETTLE_MS=80, PRELOAD_BOTH=false, SEEK_S=5;
+  var AHEAD_S=3, SETTLE_MS=120, PRELOAD_BOTH=false, SEEK_S=5;
   var PROXIED=false; try{ PROXIED=isProxied(); }catch(x){}
   var loaded=new Set(), settleTimer=null, holdUntil=0;
   var pill=document.createElement('div');
@@ -119,7 +121,7 @@ html,body{overscroll-behavior:none}
     if(cur!==FOCUS) return;
     var n=neighbors(sec,idx), keep=new Set([cur]), e=E(cur);
     if(n.next&&n.next!==cur){ wake(n.next,'auto','sd'); keep.add(n.next); e.nextV=n.next; } else e.nextV=null;
-    if(n.prev&&n.prev!==cur&&n.prev!==n.next){ wake(n.prev,'metadata','sd'); keep.add(n.prev); e.otherV=n.prev; } else e.otherV=null;
+    if(n.prev&&n.prev!==cur&&n.prev!==n.next){ wake(n.prev,cur.readyState>=2?'auto':'metadata','sd'); keep.add(n.prev); e.otherV=n.prev; } else e.otherV=null;
     Array.from(loaded).forEach(function(v){ if(!keep.has(v)) unload(v); });
   }
   function prepare(sec,idx){
@@ -148,7 +150,7 @@ html,body{overscroll-behavior:none}
     var pos=v.currentTime||0;
     setQuality(v,'sd');
     var hasSd=!PROXIED&&!!v.dataset.sdUrl;
-    say(hasSd?('Retrying (SD, try '+e.tries+'/3)...'):('Retrying (try '+e.tries+'/3)...'));
+    say((hasSd?'Retrying (SD, try ':'Retrying (try ')+e.tries+'/3)...');
     v.setAttribute('preload','auto');
     v.addEventListener('loadedmetadata',function(){ try{ if(pos>0.5) v.currentTime=pos; }catch(x){} },{once:true});
     try{ v.load(); }catch(x){}
@@ -350,7 +352,7 @@ html,body{overscroll-behavior:none}
   }
   document.querySelectorAll('video').forEach(stripControls);
   document.addEventListener('play',function(e){ if(e.target&&e.target.tagName==='VIDEO') stripControls(e.target); },true);
-  var lastScrollIdx=-1, feedReanchorTimer=0;
+  var lastScrollIdx=-1, feedSettleT=0;
   document.addEventListener('scroll',function(e){
     var t=e&&e.target;
     if(!t||!t.classList||(!t.classList.contains('gallery-em')&&!t.classList.contains('gallery-em__track'))) return;
@@ -358,44 +360,28 @@ html,body{overscroll-behavior:none}
     var slot=pickFocusedItem(g,focusSlots[currentSection]);
     if(slot===null) return;
     var el=itemsOf(g)[slot]; if(!el) return;
-    clearTimeout(feedReanchorTimer);
-    if(el.hasAttribute('data-real')&&typeof reanchorFeed==='function'){
-      feedReanchorTimer=setTimeout(function(){ try{ reanchorFeed(g,el); }catch(x){} },140);
-    }
     var idx=realIndex(el,slot);
-    if(idx===lastScrollIdx) return;
-    lastScrollIdx=idx;
-    var v=el.querySelector('video');
-    if(v){
-      stripControls(v);
-      v.setAttribute('preload','auto');
-      if(v.paused){ v.muted=true; v.play().catch(function(){}); }
+    if(idx!==lastScrollIdx){
+      lastScrollIdx=idx;
+      var v=el.querySelector('video');
+      if(v){
+        stripControls(v);
+        v.setAttribute('preload','auto');
+        if(v.paused){ v.muted=true; v.play().catch(function(){}); }
+      }
+      if(typeof updateVideoFocus==='function'){
+        try{ updateVideoFocus(currentSection,idx); }catch(x){}
+      }
     }
-    if(typeof updateVideoFocus==='function'){
-      try{ updateVideoFocus(currentSection,idx); }catch(x){}
-    }
+    clearTimeout(feedSettleT);
+    feedSettleT=setTimeout(function(){
+      if(el&&el.hasAttribute('data-real')&&typeof reanchorFeed==='function'){
+        try{ reanchorFeed(g,slot); }catch(x){}
+      }
+    },120);
   },{capture:true,passive:true});
-  var vp=document.getElementById('board-viewport')||document.body;
-  var boardReanchorTimer=0;
-  if(vp&&vp.id==='board-viewport'){
-    vp.addEventListener('scroll',function(){
-      clearTimeout(boardReanchorTimer);
-      boardReanchorTimer=setTimeout(function(){
-        if(typeof reanchorBoard!=='function'||typeof boardSections!=='function') return;
-        var secs=boardSections(), sl=vp.scrollLeft, w=vp.clientWidth||window.innerWidth;
-        if(!w) return;
-        for(var i=0;i<secs.length;i++){
-          var s=secs[i];
-          if(Math.abs((s.offsetLeft||0)-sl)<w*0.25&&s.hasAttribute('data-real')){
-            var ri=parseInt(s.getAttribute('data-real'),10);
-            if(!isNaN(ri)) try{ reanchorBoard(ri,s); }catch(x){}
-            break;
-          }
-        }
-      },140);
-    },{passive:true});
-  }
   function vidOf(el){ var it=el&&el.closest?el.closest('.gallery-item'):null; return it?it.querySelector('video'):null; }
+  var vp=document.getElementById('board-viewport')||document.body;
   var down=null, lastTap=null, tapTimer=0;
   vp.addEventListener('pointerdown',function(e){
     if(e.target.closest&&e.target.closest('.board-switcher,.video-error button')){ down=null; return; }
