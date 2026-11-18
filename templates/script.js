@@ -234,7 +234,7 @@ function galleryOf(index) {
     let best = matches[0], bestDist = Infinity;
     for (const s of matches) {
         const r = s.getBoundingClientRect();
-        const d = Math.abs(r.left + r.width / 2 - mid);
+        const d = Math.abs(boardOffset(s) + r.width / 2 - mid);
         if (d < bestDist) { bestDist = d; best = s; }
     }
     return best.querySelector('.gallery-em');
@@ -277,7 +277,9 @@ function reanchorBoard(realIndex, cloneSection) {
     const from = cloneSection.querySelector('.gallery-em');
     const to = target.querySelector('.gallery-em');
     if (from && to) to.scrollTop = from.scrollTop;
-    vp.scrollLeft = boardOffset(target);
+    boardScrollTarget = null;
+    boardScrollLeft = null;
+    vp.scrollTo({ left: boardOffset(target), behavior: 'instant' });
     finishSectionSwitch(realIndex);
     return true;
 }
@@ -355,7 +357,7 @@ function showSection(index, opts) {
     const sec = document.querySelector(`[data-section="${index}"]`);
     if (sec) sec.classList.remove('hidden');
     const gallery = galleryOf(index);
-    if (gallery) gallery.scrollTo({ left: (currentIndices[index] || 0) * window.innerWidth, behavior: 'instant' });
+    if (gallery) scrollFeedItemTo(index, currentIndices[index] || 0, 'instant');
     finishSectionSwitch(index);
 }
 
@@ -464,7 +466,7 @@ function nearestItemByReal(gallery, realIndex_) {
 
 // setupFeedWrap: clone the first and last page of a feed onto the opposite ends.
 function setupFeedWrap(gallery) {
-    if (!isMobile || !gallery || gallery.querySelector('.is-clone')) return;
+    if (!gallery || gallery.querySelector('.is-clone')) return;
     const items = Array.from(itemsOf(gallery));
     if (items.length < 2) return;
     const wrap = Math.min(WRAP_ITEMS, items.length);
@@ -492,27 +494,14 @@ function setupFeedWrap(gallery) {
 // the same screen position in a single instant jump. Nothing is animated, so it
 // reads as one continuous feed rather than a wrap.
 function reanchorFeed(sectionIndex) {
+    if (!Number.isInteger(sectionIndex)) return false;
     const gallery = galleryOf(sectionIndex);
     if (!gallery) return false;
-    const items = Array.from(itemsOf(gallery));
-    if (!items.length) return false;
-    const rect = gallery.getBoundingClientRect();
-    const middle = rect.top + rect.height / 2;
-    // Find the clone actually on screen and nearest the viewport middle
-    let clone = null, bestDist = Infinity;
-    for (const el of items) {
-        if (!el.classList.contains('is-clone')) continue;
-        const r = el.getBoundingClientRect();
-        if (r.bottom <= rect.top || r.top >= rect.bottom) continue;
-        const d = Math.abs((r.top + r.height / 2) - middle);
-        if (d < bestDist) { bestDist = d; clone = el; }
-    }
-    if (!clone) return false;
-    const real = itemByReal(gallery, clone.dataset.real);
-    if (!real) return false;
-    const delta = (real.offsetTop || 0) - (clone.offsetTop || 0);
-    if (!delta) return false;
-    gallery.scrollTop += delta;
+    const items = itemsOf(gallery);
+    const slot = pickFocusedItem(gallery, focusSlots[sectionIndex]);
+    const clone = slot === null ? null : items[slot];
+    if (!clone || !clone.classList.contains('is-clone')) return false;
+    scrollFeedItemTo(sectionIndex, realIndex(clone, slot), 'instant');
     return true;
 }
 
@@ -955,17 +944,20 @@ function scrollToIndex(sectionIndex, index) {
 function scrollFeedItemTo(sectionIndex, itemIndex, behavior) {
     const gallery = galleryOf(sectionIndex);
     if (!gallery) return;
-    const item = nearestItemByReal(gallery, itemIndex);
-    if (!item) return;
-    // Keep the focus hint on the copy we are travelling to, not a stale slot.
-    focusSlots[sectionIndex] = Array.prototype.indexOf.call(itemsOf(gallery), item);
-    if (typeof item.scrollIntoView !== 'function') return;
-    const smooth = behavior !== 'instant';
-    try {
-        item.scrollIntoView({ block: 'center', behavior: smooth ? 'smooth' : 'instant' });
-    } catch (e) {
-        item.scrollIntoView({ block: 'center' });
+    const items = Array.from(itemsOf(gallery));
+    const axis = isMobile ? 'top' : 'left';
+    const origin = gallery.getBoundingClientRect()[axis];
+    const offset = item => item.getBoundingClientRect()[axis] - origin;
+    let item = itemByReal(gallery, itemIndex);
+    if (behavior !== 'instant') {
+        for (const candidate of items) {
+            if (realIndex(candidate, items.indexOf(candidate)) !== itemIndex) continue;
+            if (!item || Math.abs(offset(candidate)) < Math.abs(offset(item))) item = candidate;
+        }
     }
+    if (!item) return;
+    focusSlots[sectionIndex] = items.indexOf(item);
+    gallery.scrollTo({ [axis]: (isMobile ? gallery.scrollTop : gallery.scrollLeft) + offset(item), behavior });
 }
 
 // pickFocusedItem: the video nearest the feed's vertical center is the one that
@@ -973,26 +965,19 @@ function scrollFeedItemTo(sectionIndex, itemIndex, behavior) {
 // Scans a small window around `hint` (the last focused DOM slot) so fast
 // scrolling stays O(window) instead of O(total) per frame. Returns a DOM slot.
 function pickFocusedItem(gallery, hint) {
+    if (!gallery) return null;
     const rect = gallery.getBoundingClientRect();
-    if (!rect || !rect.height) return null;
-    const middle = rect.top + rect.height / 2;
+    const axis = isMobile ? 'top' : 'left';
+    const size = isMobile ? 'height' : 'width';
+    if (!rect[size]) return null;
+    const middle = rect[axis] + rect[size] / 2;
     const items = itemsOf(gallery);
-    const total = items.length;
-    if (!total) return null;
-
-    const center = (hint != null && hint >= 0 && hint < total) ? hint : 0;
-    let best = null, bestDist = Infinity;
-    const WINDOW = 3;
-    for (let d = 0; d <= WINDOW; d++) {
-        const candidates = d === 0 ? [center] : [center - d, center + d];
-        for (const i of candidates) {
-            if (i < 0 || i >= total) continue;
-            const r = measure(items[i]);
-            if (!r || r.bottom <= rect.top || r.top >= rect.bottom) continue; // off-screen
-            const c = r.top + r.height / 2;
-            const dist = Math.abs(c - middle);
-            if (dist < bestDist) { bestDist = dist; best = i; }
-        }
+    let best = null, distance = Infinity;
+    for (let i = 0; i < items.length; i++) {
+        const r = items[i].getBoundingClientRect();
+        if (middle < r[axis] || middle >= r[axis] + r[size]) continue;
+        const d = Math.abs(r[axis] + r[size] / 2 - middle);
+        if (d < distance) { best = i; distance = d; }
     }
     return best;
 }
@@ -1014,7 +999,7 @@ let feedRaf = 0;
 // per frame - playback is left to onFeedSettle, so a fast fling doesn't
 // start/stop a video per item it flies past.
 function onFeedFocus(e) {
-    if (!isMobile || feedRaf || !isFeedScroll(e)) return;
+    if (feedRaf || !isFeedScroll(e) || e.target !== galleryOf(currentSection)) return;
     feedRaf = requestAnimationFrame(() => {
         feedRaf = 0;
         const gallery = galleryOf(currentSection);
@@ -1034,7 +1019,7 @@ function onFeedFocus(e) {
 // neighbour warming for whatever is centred now.
 let feedSettleTimer = 0;
 function onFeedSettle(e) {
-    if (!isMobile || !isFeedScroll(e)) return;
+    if (!isFeedScroll(e) || e.target !== galleryOf(currentSection)) return;
     clearTimeout(feedSettleTimer);
     feedSettleTimer = setTimeout(() => {
         if (reanchorFeed(currentSection)) {
@@ -1063,29 +1048,11 @@ document.addEventListener('scroll', onFeedSettle, { capture: true, passive: true
 function handleNavigation(direction) {
     Stats.recordNavigation();
     navDirection = direction;
-    if (isMobile) {
-        const gallery = galleryOf(currentSection);
-        if (!gallery) return;
-        const items = gallery.querySelectorAll('.gallery-item');
-        const totalItems = realCount(gallery);
-        if (totalItems === 0) return;
-        const cur = currentIndices[currentSection] || 0;
-        const newIndex = direction === 'forward'
-            ? (cur + 1) % totalItems
-            : (cur - 1 + totalItems) % totalItems;
-        scrollFeedItemTo(currentSection, newIndex, 'smooth');
-        return;
-    }
-    const gallery = galleryOf(currentSection);
-    if (!gallery) return;
-    const items = gallery.querySelectorAll('.gallery-item');
-    const totalItems = items.length;
-    if (totalItems === 0) return;
-    const newIndex = direction === 'forward'
-        ? (currentIndices[currentSection] + 1) % totalItems
-        : (currentIndices[currentSection] - 1 + totalItems) % totalItems;
-    
-    scrollToIndex(currentSection, newIndex);
+    const total = realCount(galleryOf(currentSection));
+    if (total < 2) return;
+    const current = currentIndices[currentSection] || 0;
+    const delta = direction === 'forward' ? 1 : -1;
+    scrollFeedItemTo(currentSection, (current + delta + total) % total, 'smooth');
 }
 
 // switchBoard: move to a neighboring board (wraps around). Uses the remembered
@@ -1145,13 +1112,16 @@ focusSlots = new Array(totalSections).fill(0);
 // ===== MOBILE SUPPORT =====
 let isMobile = window.innerWidth <= 768 || window.matchMedia('(pointer: coarse)').matches;
 
+let switcherOpen = false;
+buildSwitcherMenu();
+wireSwitcher();
+updateSwitcherPill();
+
 // Wrap each feed around on mobile, then clone the end boards onto the opposite
 // ends of the track, and only then bind handlers - the cloneNode copies arrive
 // without them, and every copy has to be live.
-if (isMobile) {
-    for (let i = 0; i < totalSections; i++) setupFeedWrap(document.getElementById(`gallery-${i}`));
-    setupBoardWrap();
-}
+for (let i = 0; i < totalSections; i++) setupFeedWrap(document.getElementById(`gallery-${i}`));
+if (isMobile) setupBoardWrap();
 
 // Attach auto-scroll ended listeners and resilience handlers for all sections
 // (clone boards included - they each get their own gallery element).
@@ -1181,7 +1151,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ===== MERGED BOARD SWITCHER (mobile pill + dropdown) =====
-let switcherOpen = false;
 
 function escapeHtml(s) {
     const d = document.createElement('div');
@@ -1290,8 +1259,6 @@ if (isMobile) {
         '--accent-active',
         PLATFORM === 'reddit' ? '#ff4500' : '#2ea44f'
     );
-    buildSwitcherMenu();
-    wireSwitcher();
     initBoardAxis();
 }
 

@@ -539,3 +539,7 @@ iframe, video {
         scroll-behavior: auto;
     }
 }
+
+@media (min-width: 769px) and (pointer: fine) {
+    .gallery-item { scroll-snap-stop: always; }
+}
