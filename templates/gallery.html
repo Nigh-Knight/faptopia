@@ -303,11 +303,9 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
   setTimeout(function(){ try{ adjust(); }catch(x){} },0);
 })();
     </script>
-    <!-- Mobile: no native controls, play-while-scrolling, figure-8 feed & board wrap, double-tap +/-5s -->
+    <!-- Figure-8 feed & board wrap (desktop + mobile) + mobile gestures -->
     <script id="faptopia-mobile">
 (function(){
-  var mobile=typeof isMobile!=='undefined'?isMobile:(window.innerWidth<=768||window.matchMedia('(pointer:coarse)').matches);
-  if(!mobile) return;
   var _pfi=window.pickFocusedItem;
   if(typeof _pfi==='function'){
     window.pickFocusedItem=function(gallery,hint){
@@ -341,17 +339,6 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
       setTimeout(function(){ if(typeof reanchorBoard==='function') reanchorBoard(targetIdx,wrapTo); },320);
     };
   }
-  var DBL_MS=260, TAP_MS=350, MOVE_PX=10, SEEK_S=5;
-  var guard=document.createElement('div'); guard.id='exit-guard'; document.body.appendChild(guard);
-  var chip=document.createElement('div'); chip.id='tap-chip'; document.body.appendChild(chip);
-  function showChip(t,side){ chip.textContent=t; chip.className='show '+(side||''); clearTimeout(chip._t); chip._t=setTimeout(function(){ chip.className=''; },550); }
-  function stripControls(v){
-    v.controls=false; v.removeAttribute('controls');
-    v.setAttribute('controlslist','nodownload noremoteplayback');
-    v.setAttribute('disablepictureinpicture','');
-  }
-  document.querySelectorAll('video').forEach(stripControls);
-  document.addEventListener('play',function(e){ if(e.target&&e.target.tagName==='VIDEO') stripControls(e.target); },true);
   var lastScrollIdx=-1, feedSettleT=0;
   document.addEventListener('scroll',function(e){
     var t=e&&e.target;
@@ -365,7 +352,6 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
       lastScrollIdx=idx;
       var v=el.querySelector('video');
       if(v){
-        stripControls(v);
         v.setAttribute('preload','auto');
         if(v.paused){ v.muted=true; v.play().catch(function(){}); }
       }
@@ -380,6 +366,20 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
       }
     },120);
   },{capture:true,passive:true});
+
+  var mobile=typeof isMobile!=='undefined'?isMobile:(window.innerWidth<=768||window.matchMedia('(pointer:coarse)').matches);
+  if(!mobile) return;
+  var DBL_MS=260, TAP_MS=350, MOVE_PX=10, SEEK_S=5;
+  var guard=document.createElement('div'); guard.id='exit-guard'; document.body.appendChild(guard);
+  var chip=document.createElement('div'); chip.id='tap-chip'; document.body.appendChild(chip);
+  function showChip(t,side){ chip.textContent=t; chip.className='show '+(side||''); clearTimeout(chip._t); chip._t=setTimeout(function(){ chip.className=''; },550); }
+  function stripControls(v){
+    v.controls=false; v.removeAttribute('controls');
+    v.setAttribute('controlslist','nodownload noremoteplayback');
+    v.setAttribute('disablepictureinpicture','');
+  }
+  document.querySelectorAll('video').forEach(stripControls);
+  document.addEventListener('play',function(e){ if(e.target&&e.target.tagName==='VIDEO') stripControls(e.target); },true);
   function vidOf(el){ var it=el&&el.closest?el.closest('.gallery-item'):null; return it?it.querySelector('video'):null; }
   var vp=document.getElementById('board-viewport')||document.body;
   var down=null, lastTap=null, tapTimer=0;
