@@ -14,7 +14,7 @@ html,body{overscroll-behavior:none}
 @media (max-width:768px),(pointer:coarse){
   body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   .gallery-item video,.gallery-item iframe{pointer-events:none}
-  #exit-guard{position:fixed;left:0;right:0;bottom:0;height:calc(env(safe-area-inset-bottom,0px) + 24px);z-index:9500;touch-action:none;background:transparent}
+  #exit-guard{position:fixed;left:0;right:0;bottom:0;height:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:9500;touch-action:none;background:transparent}
   #tap-chip{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.9);padding:10px 16px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff;font:600 15px system-ui,sans-serif;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:9600}
   #tap-chip.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
   #tap-chip.show.left{left:22%}
@@ -54,7 +54,7 @@ html,body{overscroll-behavior:none}
     <div class="autoscroll-alert" id="autoscroll-alert"></div>
     <div class="throttle-toast" id="throttle-toast"></div>
     <script>{{SCRIPT}}</script>
-    <!-- Player engine: load budget, SD-first, direction-aware preload, recovery, seek, save dialog -->
+    <!-- Player engine: load budget, SD-only default, direction-aware preload, recovery, seek, save dialog -->
     <script id="faptopia-engine">
 (function(){
   var DIR='fwd', lastIdx={}, FOCUS=null, STUCK_MS=8000;
@@ -75,7 +75,7 @@ html,body{overscroll-behavior:none}
     var sd=PROXIED?null:v.dataset.sdUrl;
     var target=(q==='sd'&&sd)?sd:e.orig;
     if(!target) return false;
-    e.q=(target===sd&&sd)?'sd':'hd';
+    e.q=(PROXIED||target===sd)?'sd':'hd';
     if(s.getAttribute('src')!==target){ s.setAttribute('src',target); return true; }
     return false;
   }
@@ -88,11 +88,12 @@ html,body{overscroll-behavior:none}
   function unload(v){
     var s=srcEl(v), e=E(v);
     if(!e.orig&&s) e.orig=s.getAttribute('src');
+    var hadSrc=!!(s&&s.getAttribute('src'));
     try{ v.pause(); }catch(x){}
     v.muted=true;
     if(s) s.removeAttribute('src');
     v.setAttribute('preload','none');
-    try{ v.load(); }catch(x){}
+    if(hadSrc||v.readyState>0){ try{ v.load(); }catch(x){} }
     loaded.delete(v);
   }
   function wake(v,preload,q){
@@ -113,6 +114,10 @@ html,body{overscroll-behavior:none}
   }
   function settle(sec,idx,cur){
     if(cur!==FOCUS) return;
+    if(cur.readyState<3){
+      settleTimer=setTimeout(function(){ settle(sec,idx,cur); },400);
+      return;
+    }
     var n=neighbors(sec,idx), keep=new Set([cur]), e=E(cur);
     if(n.next&&n.next!==cur){ wake(n.next,'metadata','sd'); keep.add(n.next); e.nextV=n.next; } else e.nextV=null;
     if(n.prev&&n.prev!==cur&&n.prev!==n.next){ wake(n.prev,'metadata','sd'); keep.add(n.prev); e.otherV=n.prev; } else e.otherV=null;
@@ -126,7 +131,7 @@ html,body{overscroll-behavior:none}
     }
     lastIdx[sec]=idx;
     FOCUS=cur;
-    wake(cur,'auto',E(cur).forceHd?'hd':'sd');
+    wake(cur,'auto','sd');
     clearTimeout(settleTimer);
     settleTimer=setTimeout(function(){ settle(sec,idx,cur); },SETTLE_MS);
   }
@@ -142,9 +147,8 @@ html,body{overscroll-behavior:none}
       return;
     }
     var pos=v.currentTime||0;
-    if(e.tries===2){ e.forceHd=(e.q==='sd'); }
-    setQuality(v,e.forceHd?'hd':'sd');
-    say('Retrying ('+(e.q==='sd'?'SD':'HD')+', try '+e.tries+'/3)...');
+    setQuality(v,'sd');
+    say('Retrying (SD, try '+e.tries+'/3)...');
     v.setAttribute('preload','auto');
     v.addEventListener('loadedmetadata',function(){ try{ if(pos>0.5) v.currentTime=pos; }catch(x){} },{once:true});
     try{ v.load(); }catch(x){}
@@ -163,8 +167,8 @@ html,body{overscroll-behavior:none}
     if(document.hidden) return;
     var v=FOCUS; if(!v){ clr(); return; }
     var e=E(v), s=srcEl(v);
-    if(!s||!s.getAttribute('src')){ clr(); return; }
-    var waiting=v.readyState<3&&!v.ended;
+    if(!s||!s.getAttribute('src')||v.paused||v.ended){ e.stuckSince=0; clr(); return; }
+    var waiting=v.readyState<3;
     if(waiting){
       if(!e.stuckSince) e.stuckSince=Date.now();
       var dt=Date.now()-e.stuckSince;
@@ -297,11 +301,28 @@ html,body{overscroll-behavior:none}
   setTimeout(function(){ try{ adjust(); }catch(x){} },0);
 })();
     </script>
-    <!-- Mobile: no native controls, tap to pause, double-tap +/-5s, exit guard, continuous prefetch -->
+    <!-- Mobile: no native controls, tap to pause, double-tap +/-5s, exit guard, wrap focus fallback -->
     <script id="faptopia-mobile">
 (function(){
   if(typeof isMobile==='undefined'||!isMobile) return;
-  var DBL_MS=260, TAP_MS=350, MOVE_PX=10, SEEK_S=5, LAST=null, DIRM='fwd', pfT=0;
+  var _pfi=window.pickFocusedItem;
+  if(typeof _pfi==='function'){
+    window.pickFocusedItem=function(gallery,hint){
+      var hit=_pfi(gallery,hint);
+      if(hit!==null&&hit!==undefined) return hit;
+      var rect=gallery&&gallery.getBoundingClientRect?gallery.getBoundingClientRect():null;
+      if(!rect||!rect.height) return null;
+      var mid=rect.top+rect.height/2, items=itemsOf(gallery), best=null, bestDist=Infinity;
+      for(var i=0;i<items.length;i++){
+        var r=measure(items[i]);
+        if(!r||r.bottom<=rect.top||r.top>=rect.bottom) continue;
+        var d=Math.abs((r.top+r.height/2)-mid);
+        if(d<bestDist){ bestDist=d; best=i; }
+      }
+      return best;
+    };
+  }
+  var DBL_MS=260, TAP_MS=350, MOVE_PX=10, SEEK_S=5;
   var guard=document.createElement('div'); guard.id='exit-guard'; document.body.appendChild(guard);
   var chip=document.createElement('div'); chip.id='tap-chip'; document.body.appendChild(chip);
   function showChip(t,side){ chip.textContent=t; chip.className='show '+(side||''); clearTimeout(chip._t); chip._t=setTimeout(function(){ chip.className=''; },550); }
@@ -343,31 +364,6 @@ html,body{overscroll-behavior:none}
       else { v.pause(); showChip('\u275A\u275A',''); }
     },DBL_MS);
   });
-  function prefetch(sec,idx){
-    if(!('serviceWorker' in navigator)||!navigator.serviceWorker.controller) return;
-    var g=galleryOf(sec); if(!g) return;
-    var n=realCount(g); if(n<2) return;
-    var offs=(DIRM==='back')?[-1,-2,-3,1]:[1,2,3,-1];
-    var ids=[], seen={};
-    offs.forEach(function(o){
-      var v=getVideoAt(sec,((idx+o)%n+n)%n);
-      var id=v&&v.dataset.gifId;
-      if(id&&!seen[id]){ seen[id]=1; ids.push(id); }
-    });
-    if(ids.length) navigator.serviceWorker.controller.postMessage({type:'video-prefetch',ids:ids});
-  }
-  var _ouf2=window.updateVideoFocus;
-  window.updateVideoFocus=function(sec,idx){
-    var r=_ouf2.apply(this,arguments);
-    var g=galleryOf(sec), n=g?realCount(g):0;
-    if(LAST!==null&&LAST!==idx&&n>1){
-      if(((LAST-1+n)%n)===idx) DIRM='back'; else if(((LAST+1)%n)===idx) DIRM='fwd';
-    }
-    LAST=idx;
-    clearTimeout(pfT);
-    pfT=setTimeout(function(){ prefetch(sec,idx); },350);
-    return r;
-  };
 })();
     </script>
 </body>
