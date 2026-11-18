@@ -11,10 +11,10 @@
     <style>{{STYLES}}</style>
     <style id="faptopia-mobile-css">
 html,body{overscroll-behavior:none}
+html,body,.board-viewport,.board-track,.gallery-em,.gallery-em__track,.tabs{scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollbar,.board-track::-webkit-scrollbar,.gallery-em::-webkit-scrollbar,.gallery-em__track::-webkit-scrollbar,.tabs::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
 @media (max-width:768px),(pointer:coarse){
   body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-  .board-viewport,.board-track,.gallery-em,.gallery-em__track,.tabs{scrollbar-width:none;-ms-overflow-style:none}
-  .board-viewport::-webkit-scrollbar,.board-track::-webkit-scrollbar,.gallery-em::-webkit-scrollbar,.gallery-em__track::-webkit-scrollbar,.tabs::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
   .gallery-item video,.gallery-item iframe{pointer-events:none}
   .gallery-item video::-webkit-media-controls,
   .gallery-item video::-webkit-media-controls-enclosure,
