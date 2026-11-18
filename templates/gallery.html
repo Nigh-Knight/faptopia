@@ -22,8 +22,8 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
   #exit-guard{position:fixed;left:0;right:0;bottom:0;height:calc(env(safe-area-inset-bottom,0px) + 14px);z-index:9500;touch-action:none;background:transparent}
   #tap-chip{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.9);padding:10px 16px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff;font:600 15px system-ui,sans-serif;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;z-index:9600}
   #tap-chip.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
-  #tap-chip.show.left{left:22%}
-  #tap-chip.show.right{left:78%}
+  #tap-chip.left{left:22%}
+  #tap-chip.right{left:78%}
   .board-switcher__menu{overscroll-behavior:contain;contain:content}
   .board-switcher__option{content-visibility:auto;contain-intrinsic-size:auto 38px}
 }
@@ -303,9 +303,10 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
   setTimeout(function(){ try{ adjust(); }catch(x){} },0);
 })();
     </script>
-    <!-- Figure-8 feed & board wrap (desktop + mobile) + mobile gestures -->
+    <!-- Figure-8 feed & board wrap (desktop + mobile) + instant board list + mobile gestures -->
     <script id="faptopia-mobile">
 (function(){
+  try{ if(typeof buildSwitcherMenu==='function') buildSwitcherMenu(); }catch(x){}
   var _pfi=window.pickFocusedItem;
   if(typeof _pfi==='function'){
     window.pickFocusedItem=function(gallery,hint){
@@ -339,9 +340,29 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
       setTimeout(function(){ if(typeof reanchorBoard==='function') reanchorBoard(targetIdx,wrapTo); },320);
     };
   }
-  var lastScrollIdx=-1, feedSettleT=0;
+  var lastScrollIdx=-1, feedSettleT=0, boardSettleT=0;
   document.addEventListener('scroll',function(e){
     var t=e&&e.target;
+    if(t&&t.id==='board-viewport'){
+      clearTimeout(boardSettleT);
+      boardSettleT=setTimeout(function(){
+        if(typeof boardSections!=='function'||typeof reanchorBoard!=='function') return;
+        var secs=boardSections(), vp=boardViewport();
+        if(!vp||secs.length<=totalSections) return;
+        var mid=vp.scrollLeft+vp.clientWidth/2;
+        for(var i=0;i<secs.length;i++){
+          var s=secs[i], l=boardOffset(s);
+          if(mid>=l&&mid<=l+s.offsetWidth){
+            if(s.hasAttribute('data-real')){
+              var rIdx=parseInt(s.getAttribute('data-real'),10);
+              if(!isNaN(rIdx)) reanchorBoard(rIdx,s);
+            }
+            break;
+          }
+        }
+      },120);
+      return;
+    }
     if(!t||!t.classList||(!t.classList.contains('gallery-em')&&!t.classList.contains('gallery-em__track'))) return;
     var g=galleryOf(currentSection); if(!g||(t!==g&&!g.contains(t))) return;
     var slot=pickFocusedItem(g,focusSlots[currentSection]);
@@ -372,7 +393,12 @@ html::-webkit-scrollbar,body::-webkit-scrollbar,.board-viewport::-webkit-scrollb
   var DBL_MS=260, TAP_MS=350, MOVE_PX=10, SEEK_S=5;
   var guard=document.createElement('div'); guard.id='exit-guard'; document.body.appendChild(guard);
   var chip=document.createElement('div'); chip.id='tap-chip'; document.body.appendChild(chip);
-  function showChip(t,side){ chip.textContent=t; chip.className='show '+(side||''); clearTimeout(chip._t); chip._t=setTimeout(function(){ chip.className=''; },550); }
+  function showChip(t,side){
+    chip.textContent=t;
+    chip.className='show '+(side||'');
+    clearTimeout(chip._t);
+    chip._t=setTimeout(function(){ chip.classList.remove('show'); },550);
+  }
   function stripControls(v){
     v.controls=false; v.removeAttribute('controls');
     v.setAttribute('controlslist','nodownload noremoteplayback');
