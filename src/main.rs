@@ -1648,6 +1648,45 @@ fn fetch_redgifs_ids_from_json(
     limit: usize,
     auth: &RedditAuth,
 ) -> Result<Vec<String>, String> {
+    if let Ok(key) = std::env::var("REDDITAPIS_KEY") {
+        if !key.is_empty() {
+            let mut gif_ids: Vec<String> = Vec::new();
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut after: Option<String> = None;
+            for _ in 0..10 {
+                let mut url = match source {
+                    RedditSource::Subreddit { name, modifier, time } => format!(
+                        "https://api.redditapis.com/api/reddit/posts?subreddit={}&sort={}&t={}&limit=100",
+                        name, modifier, time
+                    ),
+                    RedditSource::User { name, modifier, time } => format!(
+                        "https://api.redditapis.com/api/reddit/user/{}/submitted?sort={}&t={}&limit=100",
+                        name, modifier, time
+                    ),
+                };
+                if let Some(ref a) = after {
+                    url.push_str(&format!("&after={}", a));
+                }
+                let resp = ureq::get(&url)
+                    .set("Authorization", &format!("Bearer {}", key))
+                    .call()
+                    .map_err(|e| format!("redditapis error: {}", e))?;
+                let body = resp.into_string().map_err(|e| e.to_string())?;
+                let added = collect_gif_ids(&body, &mut gif_ids, &mut seen);
+                if gif_ids.len() >= limit || added == 0 {
+                    break;
+                }
+                after = serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .and_then(|v| v.get("after").and_then(|a| a.as_str()).map(|s| s.to_string()));
+                if after.is_none() {
+                    break;
+                }
+            }
+            gif_ids.truncate(limit);
+            return Ok(gif_ids);
+        }
+    }
     let mut gif_ids: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut after: Option<String> = None;
@@ -1834,7 +1873,7 @@ fn fetch_redgifs_ids(
         }
     }
 
-    let mut ids = if auth.is_oauth() {
+    let mut ids = if auth.is_oauth() || std::env::var("REDDITAPIS_KEY").map(|k| !k.is_empty()).unwrap_or(false) {
         fetch_redgifs_ids_from_json(source, limit, auth)?
     } else {
         fetch_redgifs_ids_from_rss(source, limit, auth)?
