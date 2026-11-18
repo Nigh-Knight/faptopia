@@ -272,7 +272,37 @@ html,body{overscroll-behavior:none}
     <script id="faptopia-tabs">
 (function(){
   var PAD=12;
-  function bar(){ return document.querySelector('.tabs'); }\n  function adjust(){\n    var t=bar(); if(!t||(t.offsetParent===null&&getComputedStyle(t).display==='none')) return;\n    var a=t.querySelector('.tab-button.active'); if(!a) return;\n    var L=t.scrollLeft, W=t.clientWidth, aL=a.offsetLeft, aR=aL+a.offsetWidth;\n    if(aR>L+W-PAD){ t.scrollTo({left:Math.max(0,aL-PAD),behavior:'smooth'}); }\n    else if(aL<L+PAD){ t.scrollTo({left:Math.max(0,aR-W+PAD),behavior:'smooth'}); }\n  }\n  var _fss=window.finishSectionSwitch;\n  if(typeof _fss==='function'){\n    window.finishSectionSwitch=function(){ var r=_fss.apply(this,arguments); try{ adjust(); }catch(x){} return r; };\n  }\n  window.addEventListener('keydown',function(ev){\n    var k=ev.key;\n    if((k!=='c'&&k!=='C')||ev.shiftKey||ev.ctrlKey||ev.altKey||ev.metaKey) return;\n    var a=document.activeElement;\n    if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)) return;\n    var tg=document.querySelector('.gallery-toggle');\n    if(!tg) return;\n    if(currentSection!==totalSections-1) return;\n    ev.preventDefault(); ev.stopImmediatePropagation();\n    window.location.href=tg.getAttribute('href');\n  },true);\n  if(location.hash==='#last'){\n    setTimeout(function(){\n      try{ showSection(totalSections-1); }catch(x){}\n      try{ history.replaceState(null,'',location.pathname+location.search); }catch(x){}\n    },60);\n  }\n  setTimeout(function(){ try{ adjust(); }catch(x){} },0);\n})();
+  function bar(){ return document.querySelector('.tabs'); }
+  function adjust(){
+    var t=bar(); if(!t||(t.offsetParent===null&&getComputedStyle(t).display==='none')) return;
+    var a=t.querySelector('.tab-button.active'); if(!a) return;
+    var L=t.scrollLeft, W=t.clientWidth, aL=a.offsetLeft, aR=aL+a.offsetWidth;
+    if(aR>L+W-PAD){ t.scrollTo({left:Math.max(0,aL-PAD),behavior:'smooth'}); }
+    else if(aL<L+PAD){ t.scrollTo({left:Math.max(0,aR-W+PAD),behavior:'smooth'}); }
+  }
+  var _fss=window.finishSectionSwitch;
+  if(typeof _fss==='function'){
+    window.finishSectionSwitch=function(){ var r=_fss.apply(this,arguments); try{ adjust(); }catch(x){} return r; };
+  }
+  window.addEventListener('keydown',function(ev){
+    var k=ev.key;
+    if((k!=='c'&&k!=='C')||ev.shiftKey||ev.ctrlKey||ev.altKey||ev.metaKey) return;
+    var a=document.activeElement;
+    if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable)) return;
+    var tg=document.querySelector('.gallery-toggle');
+    if(!tg) return;
+    if(currentSection!==totalSections-1) return;
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    window.location.href=tg.getAttribute('href');
+  },true);
+  if(location.hash==='#last'){
+    setTimeout(function(){
+      try{ showSection(totalSections-1); }catch(x){}
+      try{ history.replaceState(null,'',location.pathname+location.search); }catch(x){}
+    },60);
+  }
+  setTimeout(function(){ try{ adjust(); }catch(x){} },0);
+})();
     </script>
     <!-- Mobile: no native controls, tap to pause, double-tap +/-5s, exit guard, wrap focus fallback -->
     <script id="faptopia-mobile">
